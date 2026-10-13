@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.MyStatus" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#3F51B5</item>
+    </style>
+</resources>
