@@ -120,10 +120,10 @@ class StatusService : Service() {
             geocoderExecutor.execute {
                 val address = runCatching {
                     @Suppress("DEPRECATION")
-                    Geocoder(this, Locale.getDefault()).getFromLocation(location.latitude, location.longitude, 1)
+                    Geocoder(this@StatusService, Locale.getDefault()).getFromLocation(location.latitude, location.longitude, 1)
                         ?.firstOrNull()?.getAddressLine(0)?.trim()
                 }.getOrNull()?.takeIf { it.isNotBlank() }
-                if (address != null) StatusStore.setLocationAddress(this, address)
+                if (address != null) StatusStore.setLocationAddress(this@StatusService, address)
             }
         }
     }
