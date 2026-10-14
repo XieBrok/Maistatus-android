@@ -116,7 +116,7 @@ class StatusService : Service() {
 
     private fun notification(): Notification =
         NotificationCompat.Builder(this, channelId)
-            .setContentTitle("MyStatus 正在采集")
+            .setContentTitle("MaiStatus Android 正在采集")
             .setContentText("位置、活动和音乐将在获得授权后上报")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentIntent(PendingIntent.getActivity(

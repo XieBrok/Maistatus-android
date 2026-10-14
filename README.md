@@ -1,4 +1,4 @@
-# MyStatus Android 原型
+# MaiStatus Android
 
 这是一个 Kotlin Android 原型，用于在用户明确授权后采集：
 
