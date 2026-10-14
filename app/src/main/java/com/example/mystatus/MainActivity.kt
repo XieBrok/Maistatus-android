@@ -101,9 +101,10 @@ class MainActivity : ComponentActivity() {
         layout.addView(Button(this).apply {
             text = "停止采集"
             setOnClickListener {
+                StatusStore.setCollectionEnabled(this@MainActivity, false)
                 startService(Intent(this@MainActivity, StatusService::class.java)
                     .setAction(StatusService.ACTION_STOP))
-                status.text = "已请求停止采集"
+                status.text = "采集已停止；已排队事件将继续上传，不再接收新事件"
             }
         })
         status = TextView(this)
@@ -123,14 +124,17 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startCollection() {
-        val locationGranted = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        if (!locationGranted) {
-            status.text = "未获得定位权限；请先申请定位，活动和音乐仍可独立使用"
-            return
-        }
+        StatusStore.setCollectionEnabled(this, true)
         ContextCompat.startForegroundService(this, Intent(this, StatusService::class.java))
-        status.text = "采集已启动"
+        val fineGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        status.text = when {
+            fineGranted -> "采集已启动，当前使用精确定位"
+            coarseGranted -> "采集已启动；未授权精确定位，当前仅使用大致定位"
+            else -> "采集已启动；未授权定位，音乐和活动采集仍可独立运行"
+        }
     }
 
     private fun refreshStatus() {

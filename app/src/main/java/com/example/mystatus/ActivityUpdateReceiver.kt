@@ -8,6 +8,7 @@ import org.json.JSONObject
 
 class ActivityUpdateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (!StatusStore.collectionEnabled(context)) return
         if (!ActivityRecognitionResult.hasResult(intent)) return
         val result = ActivityRecognitionResult.extractResult(intent) ?: return
         val mostLikely = result.mostProbableActivity

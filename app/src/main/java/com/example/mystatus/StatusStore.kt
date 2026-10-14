@@ -13,6 +13,7 @@ object StatusStore {
     private const val LOCATION_PAUSED = "location_paused"
     private const val LAST_UPDATE = "last_update"
     private const val MUSIC_STATE = "music_state"
+    private const val COLLECTION_ENABLED = "collection_enabled"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -68,4 +69,10 @@ object StatusStore {
 
     fun setMusicState(context: Context, value: String?) =
         prefs(context).edit().putString(MUSIC_STATE, value).apply()
+
+    fun collectionEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(COLLECTION_ENABLED, false)
+
+    fun setCollectionEnabled(context: Context, value: Boolean) =
+        prefs(context).edit().putBoolean(COLLECTION_ENABLED, value).apply()
 }

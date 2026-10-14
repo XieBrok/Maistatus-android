@@ -49,13 +49,16 @@ class UploadWorker(context: Context, params: WorkerParameters) : Worker(context,
                         .put("event_type", event.type)
                     connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
                     val code = connection.responseCode
-                    if (code in 200..299) dao.delete(event.eventId)
-                    else if (code == 408 || code == 429 || code >= 500) return Result.retry()
-                    else return Result.failure()
+                    when {
+                        code in 200..299 -> dao.delete(event.eventId)
+                        code == 408 || code == 429 || code >= 500 -> return Result.retry()
+                        code in 400..499 -> dao.delete(event.eventId)
+                    }
                 } finally {
                     connection.disconnect()
                 }
             }
+            if (dao.count() > 0) UploadScheduler.enqueueRemaining(applicationContext)
             Result.success()
         } catch (_: IOException) {
             Result.retry()
@@ -68,10 +71,18 @@ object UploadScheduler {
     private const val ONCE = "status-upload-once"
 
     fun enqueue(context: Context) {
+        enqueue(context, ExistingWorkPolicy.KEEP)
+    }
+
+    fun enqueueRemaining(context: Context) {
+        enqueue(context, ExistingWorkPolicy.APPEND)
+    }
+
+    private fun enqueue(context: Context, policy: ExistingWorkPolicy) {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED).build()
         WorkManager.getInstance(context).enqueueUniqueWork(
-            ONCE, ExistingWorkPolicy.KEEP,
+            ONCE, policy,
             OneTimeWorkRequestBuilder<UploadWorker>().setConstraints(constraints).build()
         )
     }

@@ -28,6 +28,10 @@ class StatusService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        if (!StatusStore.collectionEnabled(this)) {
+            stopSelf()
+            return
+        }
         createChannel()
         startForeground(1, notification())
         activityClient = ActivityRecognition.getClient(this)
@@ -40,12 +44,20 @@ class StatusService : Service() {
         when (intent?.action) {
             ACTION_PAUSE_LOCATION -> pauseLocation()
             ACTION_RESUME_LOCATION -> resumeLocation()
-            ACTION_STOP -> stopSelf()
+            ACTION_STOP -> {
+                StatusStore.setCollectionEnabled(this, false)
+                pauseLocation()
+                if (::activityClient.isInitialized) {
+                    activityClient.removeActivityUpdates(activityPendingIntent())
+                }
+                stopSelf()
+            }
         }
         return START_NOT_STICKY
     }
 
     private fun requestActivityUpdates() {
+        if (!StatusStore.collectionEnabled(this)) return
         if (android.os.Build.VERSION.SDK_INT >= 29 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) !=
             PackageManager.PERMISSION_GRANTED) return
@@ -57,6 +69,7 @@ class StatusService : Service() {
     }
 
     private fun startLocationUpdates() {
+        if (!StatusStore.collectionEnabled(this)) return
         val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
         val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
@@ -85,6 +98,7 @@ class StatusService : Service() {
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
+            if (!StatusStore.collectionEnabled(this@StatusService)) return
             result.lastLocation?.let {
                 EventQueue.enqueue(this@StatusService, "location", JSONObject()
                     .put("latitude", it.latitude).put("longitude", it.longitude)
@@ -111,11 +125,15 @@ class StatusService : Service() {
 
     override fun onDestroy() {
         if (locationRunning) locationClient.removeLocationUpdates(locationCallback)
-        activityClient.removeActivityUpdates(PendingIntent.getBroadcast(
-            this, 1, Intent(this, ActivityUpdateReceiver::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE))
+        if (::activityClient.isInitialized) {
+            activityClient.removeActivityUpdates(activityPendingIntent())
+        }
         super.onDestroy()
     }
+
+    private fun activityPendingIntent(): PendingIntent = PendingIntent.getBroadcast(
+        this, 1, Intent(this, ActivityUpdateReceiver::class.java),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
 
     override fun onBind(intent: Intent?): IBinder? = null
 

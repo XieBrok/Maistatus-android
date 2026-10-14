@@ -24,7 +24,7 @@ data class StatusEventEntity(
 @Dao
 interface StatusEventDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    fun insert(event: StatusEventEntity)
+    fun insert(event: StatusEventEntity): Long
 
     @Query("SELECT * FROM status_events ORDER BY occurredAt ASC LIMIT :limit")
     fun pending(limit: Int): List<StatusEventEntity>
@@ -56,10 +56,15 @@ object EventQueue {
     private val executor = Executors.newSingleThreadExecutor()
 
     fun enqueue(context: Context, type: String, payload: JSONObject, occurredAt: Long = System.currentTimeMillis()) {
+        if (!StatusStore.collectionEnabled(context)) return
         val event = EventFactory.create(type, payload, occurredAt)
         StatusStore.setLastUpdate(context, occurredAt)
-        executor.execute { AppDatabase.get(context).eventDao().insert(event) }
-        UploadScheduler.enqueue(context)
+        executor.execute {
+            if (!StatusStore.collectionEnabled(context)) return@execute
+            if (AppDatabase.get(context).eventDao().insert(event) != -1L) {
+                UploadScheduler.enqueue(context)
+            }
+        }
     }
 }
 

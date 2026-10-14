@@ -10,13 +10,17 @@ import org.json.JSONObject
 
 class MusicNotificationListener : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        if (!StatusStore.collectionEnabled(this)) return
         if (sbn.packageName !in StatusStore.allowedMusicPlayers(this)) return
         val extras = sbn.notification.extras
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
         val artist = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-        val token = if (Build.VERSION.SDK_INT >= 21) {
+        val token: MediaSession.Token? = if (Build.VERSION.SDK_INT >= 33) {
             extras.getParcelable(Notification.EXTRA_MEDIA_SESSION, MediaSession.Token::class.java)
-        } else null
+        } else {
+            @Suppress("DEPRECATION")
+            (extras.getParcelable(Notification.EXTRA_MEDIA_SESSION) as? MediaSession.Token)
+        }
         val controller = token?.let { MediaController(this, it) }
         val state = controller?.playbackState?.state
         val isMedia = sbn.notification.category == Notification.CATEGORY_TRANSPORT ||
@@ -47,6 +51,7 @@ class MusicNotificationListener : NotificationListenerService() {
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        if (!StatusStore.collectionEnabled(this)) return
         if (sbn.packageName in StatusStore.allowedMusicPlayers(this) &&
             StatusStore.musicKey(this) == sbn.key) {
             EventQueue.enqueue(this, "music", JSONObject().put("state", "stopped")
