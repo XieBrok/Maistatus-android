@@ -12,6 +12,7 @@ object StatusStore {
     private const val DEVICE_CREDENTIAL = "device_credential"
     private const val LOCATION_PAUSED = "location_paused"
     private const val LAST_UPDATE = "last_update"
+    private const val LAST_SUCCESSFUL_UPLOAD = "last_successful_upload"
     private const val MUSIC_STATE = "music_state"
     private const val COLLECTION_ENABLED = "collection_enabled"
 
@@ -64,6 +65,12 @@ object StatusStore {
 
     fun setLastUpdate(context: Context, value: Long) =
         prefs(context).edit().putLong(LAST_UPDATE, value).apply()
+
+    fun lastSuccessfulUpload(context: Context): Long =
+        prefs(context).getLong(LAST_SUCCESSFUL_UPLOAD, 0L)
+
+    fun setLastSuccessfulUpload(context: Context, value: Long) =
+        prefs(context).edit().putLong(LAST_SUCCESSFUL_UPLOAD, value).apply()
 
     fun musicState(context: Context): String? = prefs(context).getString(MUSIC_STATE, null)
 

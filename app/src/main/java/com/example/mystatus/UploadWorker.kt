@@ -50,7 +50,13 @@ class UploadWorker(context: Context, params: WorkerParameters) : Worker(context,
                     connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
                     val code = connection.responseCode
                     when {
-                        code in 200..299 -> dao.delete(event.eventId)
+                        code in 200..299 -> {
+                            dao.delete(event.eventId)
+                            StatusStore.setLastSuccessfulUpload(
+                                applicationContext,
+                                System.currentTimeMillis()
+                            )
+                        }
                         code == 408 || code == 429 || code >= 500 -> return Result.retry()
                         code in 400..499 -> dao.delete(event.eventId)
                     }

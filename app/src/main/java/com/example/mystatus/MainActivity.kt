@@ -4,8 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -54,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -71,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -92,19 +92,26 @@ private data class DashboardState(
     val musicState: String?,
     val activity: String,
     val lastUpdate: Long,
-    val pending: Int,
-    val serverConfigured: Boolean,
-    val networkAvailable: Boolean
+    val lastSuccessfulUpload: Long,
+    val pending: Int
 )
 
 class MainActivity : ComponentActivity() {
     private val locationRequest = 101
     private val activityRequest = 102
     private val notificationRequest = 103
+    private val serverConnectionViewModel by lazy {
+        ViewModelProvider(this)[ServerConnectionViewModel::class.java]
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MyStatusTheme { MyStatusApp() } }
+        setContent { MyStatusTheme { MyStatusApp(serverConnectionViewModel) } }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        serverConnectionViewModel.checkConnection()
     }
 
     fun requestLocationPermission() {
@@ -125,10 +132,11 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun MyStatusApp() {
+private fun MyStatusApp(serverConnectionViewModel: ServerConnectionViewModel) {
     val navController = rememberNavController()
     val context = LocalContext.current
     val state by rememberDashboardState(context)
+    val serverConnection by serverConnectionViewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
@@ -136,7 +144,9 @@ private fun MyStatusApp() {
             composable("dashboard") {
                 DashboardScreen(
                     state = state,
+                    serverConnection = serverConnection,
                     openSettings = { navController.navigate("settings") },
+                    onCheckServer = { serverConnectionViewModel.checkConnection() },
                     onStart = { startCollection(context); scope.launch { snackbar.showSnackbar("采集已启动") } },
                     onPauseLocation = {
                         val action = if (state.locationPaused) StatusService.ACTION_RESUME_LOCATION
@@ -176,6 +186,7 @@ private fun MyStatusApp() {
                             StatusStore.setDeviceCredential(context, token)
                             StatusStore.setAllowedMusicPlayers(context, players.toSet())
                             UploadScheduler.enqueue(context)
+                            serverConnectionViewModel.checkConnection()
                             scope.launch { snackbar.showSnackbar("配置已保存") }
                         }
                     },
@@ -203,9 +214,8 @@ private fun rememberDashboardState(context: Context): androidx.compose.runtime.S
             musicState = null,
             activity = "UNKNOWN",
             lastUpdate = 0L,
-            pending = 0,
-            serverConfigured = false,
-            networkAvailable = false
+            lastSuccessfulUpload = 0L,
+            pending = 0
         ),
         context
     ) {
@@ -229,12 +239,6 @@ private fun readDashboardState(context: Context): DashboardState {
     val postNotification = Build.VERSION.SDK_INT < 33 ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
         PackageManager.PERMISSION_GRANTED
-    val connectivity = context.getSystemService(ConnectivityManager::class.java)
-    val networkAvailable = connectivity?.activeNetwork?.let { network ->
-        connectivity.getNetworkCapabilities(network)?.hasCapability(
-            NetworkCapabilities.NET_CAPABILITY_INTERNET
-        ) == true
-    } == true
     return DashboardState(
         collectionEnabled = StatusStore.collectionEnabled(context),
         location = when { fine -> "精确定位" ; coarse -> "大致定位" ; else -> "未授权" },
@@ -246,9 +250,8 @@ private fun readDashboardState(context: Context): DashboardState {
         musicState = StatusStore.musicState(context),
         activity = StatusStore.activity(context),
         lastUpdate = StatusStore.lastUpdate(context),
-        pending = AppDatabase.get(context).eventDao().count(),
-        serverConfigured = StatusStore.serverUrl(context).startsWith("https://", true),
-        networkAvailable = networkAvailable
+        lastSuccessfulUpload = StatusStore.lastSuccessfulUpload(context),
+        pending = AppDatabase.get(context).eventDao().count()
     )
 }
 
@@ -256,7 +259,9 @@ private fun readDashboardState(context: Context): DashboardState {
 @Composable
 private fun DashboardScreen(
     state: DashboardState,
+    serverConnection: ServerConnectionState,
     openSettings: () -> Unit,
+    onCheckServer: () -> Unit,
     onStart: () -> Unit,
     onPauseLocation: () -> Unit,
     onStop: () -> Unit
@@ -277,7 +282,7 @@ private fun DashboardScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item { Spacer(Modifier.height(4.dp)) }
-            item { ServerConnectionCard(state) }
+            item { ServerConnectionCard(serverConnection, onCheckServer) }
             item { CollectionCard(state) }
             item { MusicCard(state) }
             item { LocationCard(state) }
@@ -306,19 +311,38 @@ private fun DashboardScreen(
 }
 
 @Composable
-private fun ServerConnectionCard(state: DashboardState) {
-    val (title, supporting, icon, color) = when {
-        !state.serverConfigured -> ConnectionCopy(
-            "未配置服务器", "请在设置中填写 HTTPS 服务器地址", Icons.Default.ErrorOutline,
+private fun ServerConnectionCard(
+    state: ServerConnectionState,
+    onCheck: () -> Unit
+) {
+    val (title, defaultDetail, icon, color) = when (state.status) {
+        ServerConnectionStatus.NOT_CONFIGURED -> ConnectionCopy(
+            "未配置", "请在设置中填写 HTTPS 服务器地址", Icons.Default.ErrorOutline,
             MaterialTheme.colorScheme.error
         )
-        !state.networkAvailable -> ConnectionCopy(
-            "等待网络连接", "当前设备没有可用的网络，上传任务会在网络恢复后重试",
-            Icons.Default.CloudUpload, MaterialTheme.colorScheme.tertiary
+        ServerConnectionStatus.CHECKING -> ConnectionCopy(
+            "检查中", "正在请求 /health，请稍候", Icons.Default.CloudUpload,
+            MaterialTheme.colorScheme.primary
         )
-        else -> ConnectionCopy(
-            "可以连接服务器", "服务器地址已配置，WorkManager 将在网络可用时处理待上传事件",
-            Icons.Default.CheckCircle, MaterialTheme.colorScheme.primary
+        ServerConnectionStatus.CONNECTED -> ConnectionCopy(
+            "已连接", "健康检查接口返回正常", Icons.Default.CheckCircle,
+            MaterialTheme.colorScheme.primary
+        )
+        ServerConnectionStatus.TIMEOUT -> ConnectionCopy(
+            "网络超时", "连接或读取健康检查接口超时", Icons.Default.ErrorOutline,
+            MaterialTheme.colorScheme.error
+        )
+        ServerConnectionStatus.CONNECTION_FAILED -> ConnectionCopy(
+            "连接失败", "无法建立到服务器的网络连接", Icons.Default.ErrorOutline,
+            MaterialTheme.colorScheme.error
+        )
+        ServerConnectionStatus.HTTP_ERROR -> ConnectionCopy(
+            "HTTP 服务异常", "健康检查接口没有返回成功状态", Icons.Default.ErrorOutline,
+            MaterialTheme.colorScheme.error
+        )
+        ServerConnectionStatus.TLS_ERROR -> ConnectionCopy(
+            "TLS 证书错误", "服务器证书或 TLS 握手校验失败", Icons.Default.ErrorOutline,
+            MaterialTheme.colorScheme.error
         )
     }
     Card(
@@ -334,7 +358,8 @@ private fun ServerConnectionCard(state: DashboardState) {
             Column {
                 Text("服务器连接", style = MaterialTheme.typography.labelLarge)
                 Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                Text(supporting, style = MaterialTheme.typography.bodyMedium)
+                Text(state.detail.ifBlank { defaultDetail }, style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = onCheck) { Text("重新检查") }
             }
         }
     }
@@ -361,7 +386,14 @@ private fun CollectionCard(state: DashboardState) {
         else -> "尚未采集到状态事件"
     }) {
         InfoRow(Icons.Default.CloudUpload, "待上传事件", "${state.pending} 条")
-        Text("服务器连接由 WorkManager 按网络状态处理", style = MaterialTheme.typography.bodySmall)
+        Text(
+            if (state.lastSuccessfulUpload > 0) {
+                "最近成功上报：${formatTime(state.lastSuccessfulUpload)}"
+            } else {
+                "尚未成功上报过数据"
+            },
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
 
