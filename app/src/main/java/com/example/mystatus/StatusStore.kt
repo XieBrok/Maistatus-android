@@ -20,15 +20,19 @@ object StatusStore {
     private const val MUSIC_ARTIST = "music_artist"
     private const val MUSIC_LAST_READ = "music_last_read"
     private const val MUSIC_DIAGNOSTIC = "music_diagnostic"
+    private const val LOCATION_ADDRESS = "location_address"
+    private const val LOCATION_ADDRESS_TIME = "location_address_time"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun serverUrl(context: Context): String =
-        prefs(context).getString(SERVER_URL, "") ?: ""
+    fun serverUrl(context: Context): String {
+        val raw = prefs(context).getString(SERVER_URL, "") ?: ""
+        return ServerUrls.normalizeBaseUrl(raw) ?: raw.trim()
+    }
 
     fun setServerUrl(context: Context, value: String) =
-        prefs(context).edit().putString(SERVER_URL, value.trim()).apply()
+        prefs(context).edit().putString(SERVER_URL, ServerUrls.normalizeBaseUrl(value) ?: value.trim()).apply()
 
     fun deviceCredential(context: Context): String =
         prefs(context).getString(DEVICE_CREDENTIAL, "") ?: ""
@@ -118,4 +122,14 @@ object StatusStore {
 
     fun setMusicDiagnostic(context: Context, diagnostic: String) =
         prefs(context).edit().putString(MUSIC_DIAGNOSTIC, diagnostic).apply()
+
+    fun locationAddress(context: Context): String? =
+        prefs(context).getString(LOCATION_ADDRESS, null)
+
+    fun locationAddressTime(context: Context): Long =
+        prefs(context).getLong(LOCATION_ADDRESS_TIME, 0L)
+
+    fun setLocationAddress(context: Context, address: String, updatedAt: Long = System.currentTimeMillis()) =
+        prefs(context).edit().putString(LOCATION_ADDRESS, address)
+            .putLong(LOCATION_ADDRESS_TIME, updatedAt).apply()
 }

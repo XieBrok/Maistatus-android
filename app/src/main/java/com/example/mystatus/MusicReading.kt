@@ -1,6 +1,8 @@
 package com.example.mystatus
 
 import android.media.session.PlaybackState
+import android.app.Notification
+import android.os.Bundle
 
 enum class MusicPlaybackState { PLAYING, PAUSED, STOPPED, UNKNOWN }
 
@@ -35,6 +37,32 @@ object MusicPlayers {
         value.matches(Regex("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+"))
 }
 
+internal data class NotificationMusicFields(
+    val title: String,
+    val artist: String?,
+    val album: String?
+)
+
+internal fun parseNotificationMusicFields(notification: Notification): NotificationMusicFields? {
+    val extras = notification.extras ?: Bundle()
+    val title = firstText(extras, Notification.EXTRA_TITLE, Notification.EXTRA_TITLE_BIG) ?: return null
+    val artist = firstText(extras, Notification.EXTRA_TEXT, Notification.EXTRA_SUB_TEXT, Notification.EXTRA_BIG_TEXT)
+    val album = firstText(extras, Notification.EXTRA_INFO_TEXT)
+    val template = extras.getString(Notification.EXTRA_TEMPLATE).orEmpty()
+    val mediaLike = notification.category == Notification.CATEGORY_TRANSPORT ||
+        extras.containsKey(Notification.EXTRA_MEDIA_SESSION) ||
+        template.contains("MediaStyle", ignoreCase = true)
+    val ongoing = notification.flags and Notification.FLAG_ONGOING_EVENT != 0
+    if (notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0 && !mediaLike) return null
+    if (!mediaLike && (!ongoing || artist.isNullOrBlank())) return null
+    if (artist != null && artist.equals(title, ignoreCase = true)) return null
+    return NotificationMusicFields(title, artist, album)
+}
+
+private fun firstText(extras: Bundle, vararg keys: String): String? =
+    keys.asSequence().mapNotNull { extras.getCharSequence(it)?.toString()?.trim() }
+        .firstOrNull { it.isNotBlank() }
+
 internal data class MusicCandidate(
     val sourceId: String,
     val packageName: String,
@@ -46,7 +74,7 @@ internal fun selectMusicCandidate(candidates: Collection<MusicCandidate>): Music
     candidates.sortedWith(
         compareByDescending<MusicCandidate> { it.state == MusicPlaybackState.PLAYING }
             .thenByDescending { it.state == MusicPlaybackState.PAUSED }
-            .thenByDescending { it.sourceId.startsWith("session:") }
+            .thenByDescending { it.sourceId.startsWith("notification:") }
     ).firstOrNull {
         it.state != MusicPlaybackState.STOPPED && it.metadata?.isUsable == true
     }

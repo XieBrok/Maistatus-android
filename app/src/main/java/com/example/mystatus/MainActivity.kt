@@ -53,7 +53,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -84,6 +83,7 @@ import java.util.Date
 private data class DashboardState(
     val collectionEnabled: Boolean,
     val location: String,
+    val locationUpdated: Long,
     val locationPaused: Boolean,
     val activityPermission: Boolean,
     val notificationPermission: Boolean,
@@ -179,16 +179,13 @@ private fun MyStatusApp(serverConnectionViewModel: ServerConnectionViewModel) {
                         else StatusService.ACTION_PAUSE_LOCATION
                         context.startService(Intent(context, StatusService::class.java).setAction(action))
                     },
-                    onSave = { url, token, players ->
-                        if (!url.startsWith("https://", true)) {
-                            scope.launch { snackbar.showSnackbar("服务器地址必须使用 HTTPS") }
-                        } else if (players.any { !MusicPlayers.isValidPackage(it) }) {
-                            scope.launch { snackbar.showSnackbar("播放器包名格式不正确") }
+                    onSave = { url, token, _ ->
+                        val normalized = ServerUrls.normalizeBaseUrl(url)
+                        if (normalized == null) {
+                            scope.launch { snackbar.showSnackbar("请输入合法的 HTTPS 服务器主域名") }
                         } else {
-                            StatusStore.setServerUrl(context, url)
+                            StatusStore.setServerUrl(context, normalized)
                             StatusStore.setDeviceCredential(context, token)
-                            StatusStore.setAllowedMusicPlayers(context, players.toSet())
-                            MusicNotificationListener.refreshConfiguredSources()
                             UploadScheduler.enqueue(context)
                             serverConnectionViewModel.checkConnection()
                             scope.launch { snackbar.showSnackbar("配置已保存") }
@@ -210,6 +207,7 @@ private fun rememberDashboardState(context: Context): androidx.compose.runtime.S
         initialValue = DashboardState(
             collectionEnabled = false,
             location = "检查中",
+            locationUpdated = 0L,
             locationPaused = false,
             activityPermission = false,
             notificationPermission = false,
@@ -250,6 +248,7 @@ private fun readDashboardState(context: Context): DashboardState {
         collectionEnabled = StatusStore.collectionEnabled(context),
         location = when { fine -> "精确定位" ; coarse -> "大致定位" ; else -> "未授权" },
         locationPaused = StatusStore.isLocationPaused(context),
+        locationUpdated = StatusStore.locationAddressTime(context),
         activityPermission = activity,
         notificationPermission = notification,
         postNotificationPermission = postNotification,
@@ -438,8 +437,20 @@ private fun MusicCard(state: DashboardState) {
 
 @Composable
 private fun LocationCard(state: DashboardState) {
-    StatusCard(Icons.Default.LocationOn, "位置状态", state.location,
-        if (state.location == "未授权") "请在设置中授予定位权限" else if (state.locationPaused) "定位采集已暂停" else "首页不显示完整经纬度") {
+    val address = StatusStore.locationAddress(LocalContext.current)
+    val value = when {
+        state.location == "未授权" -> "未授权"
+        address != null -> address
+        state.locationPaused -> "等待定位"
+        else -> "等待定位"
+    }
+    StatusCard(Icons.Default.LocationOn, "位置状态", value,
+        when {
+            state.location == "未授权" -> "请在设置中授予定位权限"
+            state.locationPaused -> "定位已暂停${if (address != null) "，最近已知位置" else ""}"
+            state.locationUpdated > 0 -> "最近更新：${formatTime(state.locationUpdated)}"
+            else -> "暂时无法获取地址"
+        }) {
         Text("精度信息仅在采集到真实位置后上报", style = MaterialTheme.typography.bodySmall)
     }
 }
@@ -493,13 +504,10 @@ private fun SettingsScreen(
     val context = LocalContext.current
     var url by rememberSaveable { mutableStateOf("") }
     var token by rememberSaveable { mutableStateOf("") }
-    var playersText by rememberSaveable { mutableStateOf("") }
-    var playersError by rememberSaveable { mutableStateOf<String?>(null) }
     var initialized by rememberSaveable { mutableStateOf(false) }
     if (!initialized) {
         url = LocalContext.current.let { StatusStore.serverUrl(it) }
         token = LocalContext.current.let { StatusStore.deviceCredential(it) }
-        playersText = LocalContext.current.let { StatusStore.allowedMusicPlayers(it).joinToString(", ") }
         initialized = true
     }
     Scaffold(topBar = {
@@ -524,39 +532,32 @@ private fun SettingsScreen(
                 if (!state.activityPermission) TextButton(onClick = onActivityPermission) { Text("授权") }
             } }
             item { SettingsHeader("服务器设置") }
-            item { EditorRow("服务器 HTTPS 地址", url, false) { url = it } }
+            item { EditorRow("服务器主域名", url, false) { url = it } }
+            item {
+                Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("示例：https://status.example.com", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "事件上报地址：${ServerUrls.eventsUrl(url) ?: "请输入合法的 HTTPS 主域名"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "连接检测地址：${ServerUrls.healthUrl(url) ?: "请输入合法的 HTTPS 主域名"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
             item { EditorRow("设备 Token", token, true) { token = it } }
             item { Text("Token 仅保存在应用私有存储中，不会在日志或首页显示", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
-            item { SettingsAction("保存配置") { onSave(url.trim(), token, playersText.split(",").map { it.trim() }.filter { it.isNotEmpty() }) } }
+            item { SettingsAction("保存配置") { onSave(url.trim(), token, emptyList()) } }
             item { SettingsHeader("同步设置") }
             item { SettingRow("定时补报间隔", "15 分钟（WorkManager）") }
             item { SettingRow("当前待上传事件", "${state.pending} 条") }
             item { SettingsAction("立即同步") { onSync() } }
-            item { SettingsHeader("音乐来源设置") }
-            item { MusicSourcesEditor(playersText, onChange = { playersText = it }) }
-            item {
-                val configured = StatusStore.allowedMusicPlayers(context)
-                Text(
-                    "已配置播放器：${configured.size} 个${if (configured.isEmpty()) "" else "（${configured.joinToString("、")}）"}",
-                    Modifier.padding(horizontal = 16.dp),
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
             item { Text("状态：${state.musicDiagnostic}", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
-            item { Text("只接收已选择包名的媒体通知；可见应用受 Android 11 应用可见性规则限制。", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
-            item { SettingsAction("保存播放器来源") {
-                val players = playersText.split(",").map(String::trim).filter(String::isNotEmpty)
-                if (players.all(MusicPlayers::isValidPackage)) {
-                    StatusStore.setAllowedMusicPlayers(context, players.toSet())
-                    MusicNotificationListener.refreshConfiguredSources()
-                    playersError = null
-                } else {
-                    playersError = "播放器包名格式不正确，格式应为 com.example.player"
-                }
-            } }
-            playersError?.let { error ->
-                item { Text(error, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
-            }
             item { SettingsAction("诊断音乐读取") {
                 MusicNotificationListener.refreshConfiguredSources()
             } }
@@ -572,91 +573,6 @@ private fun SettingsScreen(
 private fun SettingsHeader(text: String) {
     Text(text, Modifier.padding(start = 16.dp, top = 20.dp, bottom = 4.dp), style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary)
-}
-
-private data class InstalledMusicApp(val label: String, val packageName: String)
-
-@Composable
-private fun MusicSourcesEditor(value: String, onChange: (String) -> Unit) {
-    val context = LocalContext.current
-    var query by rememberSaveable { mutableStateOf("") }
-    var refresh by remember { mutableStateOf(0) }
-    var apps by remember(refresh) { mutableStateOf<List<InstalledMusicApp>>(emptyList()) }
-    var loading by remember(refresh) { mutableStateOf(true) }
-    var loadError by remember(refresh) { mutableStateOf<String?>(null) }
-    val selected = remember(value) {
-        value.split(",").map(String::trim).filter(String::isNotEmpty).toSet()
-    }
-    LaunchedEffect(refresh) {
-        loading = true
-        loadError = null
-        val result = withContext(Dispatchers.IO) {
-            runCatching {
-                val installed = if (Build.VERSION.SDK_INT >= 33) {
-                    context.packageManager.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
-                } else {
-                    @Suppress("DEPRECATION")
-                    context.packageManager.getInstalledApplications(0)
-                }
-                installed
-                    .map { InstalledMusicApp(
-                        context.packageManager.getApplicationLabel(it).toString()
-                            .trim().ifBlank { it.packageName },
-                        it.packageName
-                    ) }
-                    .filter { app ->
-                        app.packageName in selected ||
-                            app.label.contains("music", true) ||
-                            app.label.contains("音乐") ||
-                            MusicPlayers.knownPackages.values.contains(app.packageName)
-                    }
-                    .sortedBy { it.label.lowercase() }
-            }.fold(
-                onSuccess = { it to null },
-                onFailure = { emptyList<InstalledMusicApp>() to (it.message ?: "系统拒绝了应用查询") }
-            )
-        }
-        apps = result.first
-        loadError = result.second
-        loading = false
-    }
-    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { refresh++ }, Modifier.weight(1f)) { Text("扫描已安装应用") }
-            TextButton(onClick = { refresh++ }) { Text("刷新") }
-        }
-        androidx.compose.material3.OutlinedTextField(
-            value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(),
-            label = { Text("搜索应用名称或包名") }, singleLine = true
-        )
-        if (loading) {
-            Text("正在读取符合查询范围的已安装音乐应用…", style = MaterialTheme.typography.bodyMedium)
-        } else if (loadError != null) {
-            Text("读取应用列表失败：$loadError", color = MaterialTheme.colorScheme.error)
-        } else if (apps.isEmpty()) {
-            Text(
-                "没有检测到符合查询范围的音乐应用。请确认播放器已安装，或直接输入合法包名；Android 11+ 的应用可见性可能限制列表结果。",
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
-        apps.filter {
-            query.isBlank() || it.label.contains(query, true) || it.packageName.contains(query, true)
-        }.forEach { app ->
-            val enabled = app.packageName in selected
-            ListItem(
-                headlineContent = { Text(app.label) },
-                supportingContent = { Text(app.packageName) },
-                trailingContent = {
-                    TextButton(onClick = {
-                        val updated = if (enabled) selected - app.packageName else selected + app.packageName
-                        onChange(updated.joinToString(", "))
-                    }) { Text(if (enabled) "已选择" else "选择") }
-                }
-            )
-        }
-        Text("手动包名仍可填写；若列表中找不到，可能是 Android 11+ 应用可见性限制，并不代表应用未安装。",
-            style = MaterialTheme.typography.bodySmall)
-    }
 }
 
 @Composable

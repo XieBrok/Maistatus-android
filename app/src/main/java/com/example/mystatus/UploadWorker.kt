@@ -27,8 +27,9 @@ class UploadWorker(context: Context, params: WorkerParameters) : Worker(context,
         val endpoint = StatusStore.serverUrl(applicationContext)
         val credential = StatusStore.deviceCredential(applicationContext)
         if (endpoint.isBlank() || credential.isBlank()) return Result.failure()
-        val url = try { URL(endpoint) } catch (_: MalformedURLException) { return Result.failure() }
-        if (!UploadPolicy.isAllowedEndpoint(endpoint)) return Result.failure()
+        val eventsEndpoint = ServerUrls.eventsUrl(endpoint) ?: return Result.failure()
+        val url = try { URL(eventsEndpoint) } catch (_: MalformedURLException) { return Result.failure() }
+        if (!UploadPolicy.isAllowedEndpoint(eventsEndpoint)) return Result.failure()
 
         val dao = AppDatabase.get(applicationContext).eventDao()
         return try {

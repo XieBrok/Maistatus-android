@@ -60,6 +60,7 @@ class MusicNotificationListener : NotificationListenerService() {
             callbacks.clear()
             controllers.clear()
             sessions.clear()
+            handler.removeCallbacksAndMessages(null)
             instance = null
             StatusStore.setMusicDiagnostic(this, "通知监听服务已断开，等待系统重新连接")
         }
@@ -77,7 +78,6 @@ class MusicNotificationListener : NotificationListenerService() {
     }
 
     private fun processNotification(sbn: StatusBarNotification) {
-        if (sbn.packageName !in StatusStore.allowedMusicPlayers(this)) return
         val extras = sbn.notification.extras
         val token = runCatching {
             if (Build.VERSION.SDK_INT >= 33) {
@@ -87,14 +87,25 @@ class MusicNotificationListener : NotificationListenerService() {
                 extras.getParcelable(Notification.EXTRA_MEDIA_SESSION) as? MediaSession.Token
             }
         }.getOrNull()
-        if (sbn.notification.category != Notification.CATEGORY_TRANSPORT && token == null) return
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
-        val artist = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+        val fields = parseNotificationMusicFields(sbn.notification)
+        if (fields == null) {
+            notifications.remove(sbn.key)
+            recompute()
+            return
+        }
         val controller = token?.let { runCatching { MediaController(this, it) }.getOrNull() }
-        val state = playbackStateOf(controller?.playbackState?.state)
+        val metadata = runCatching { controller?.metadata?.let(::metadataFor) }.getOrNull()
+        val state = playbackStateOf(controller?.playbackState?.state).takeUnless {
+            it == MusicPlaybackState.UNKNOWN
+        } ?: if (sbn.notification.flags and Notification.FLAG_ONGOING_EVENT != 0) {
+            MusicPlaybackState.PLAYING
+        } else {
+            MusicPlaybackState.UNKNOWN
+        }
         notifications[sbn.key] = MusicReading(
             "notification:${sbn.key}", sbn.packageName, state,
-            MusicMetadata(title, artist).takeIf { !it.title.isNullOrBlank() }
+            metadata?.takeIf { it.isUsable }
+                ?: MusicMetadata(fields.title, fields.artist, fields.album)
         )
         recompute()
     }
@@ -105,7 +116,6 @@ class MusicNotificationListener : NotificationListenerService() {
         callbacks.clear()
         controllers.clear()
         activeControllers.forEach { controller ->
-            if (controller.packageName !in StatusStore.allowedMusicPlayers(this)) return@forEach
             val sourceId = "session:${controller.sessionToken}"
             val callback = object : MediaController.Callback() {
                 override fun onPlaybackStateChanged(state: android.media.session.PlaybackState?) =
@@ -122,23 +132,25 @@ class MusicNotificationListener : NotificationListenerService() {
             runCatching { controller.registerCallback(callback, handler) }
             sessions[sourceId] = readingFor(controller, sourceId)
         }
-        if (activeControllers.isNotEmpty() && sessions.isEmpty() && notifications.isEmpty()) {
-            StatusStore.setMusicDiagnostic(this, "检测到媒体会话，但没有匹配已配置的播放器")
-        } else if (activeControllers.isEmpty() && notifications.isEmpty()) {
-            StatusStore.setMusicDiagnostic(this, "权限已授予，但尚未检测到活动媒体会话")
+        if (activeControllers.isEmpty() && notifications.isEmpty()) {
+            StatusStore.setMusicDiagnostic(this, "权限已授予，但尚未获取到音乐通知")
         }
         recompute()
     }
 
     private fun refreshSession(controller: MediaController) {
         val sourceId = "session:${controller.sessionToken}"
-        if (controller.packageName !in StatusStore.allowedMusicPlayers(this)) {
-            sessions.remove(sourceId)
-        } else {
-            sessions[sourceId] = readingFor(controller, sourceId)
-        }
+        sessions[sourceId] = readingFor(controller, sourceId)
         recompute()
     }
+
+    private fun metadataFor(metadata: MediaMetadata): MusicMetadata =
+        MusicMetadata(
+            metadata.getString(MediaMetadata.METADATA_KEY_TITLE)?.trim(),
+            (metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)
+                ?: metadata.getString(MediaMetadata.METADATA_KEY_AUTHOR))?.trim(),
+            metadata.getString(MediaMetadata.METADATA_KEY_ALBUM)?.trim()
+        )
 
     private fun readingFor(controller: MediaController, sourceId: String) =
         MusicReading(
@@ -157,21 +169,15 @@ class MusicNotificationListener : NotificationListenerService() {
         )
 
     private fun recompute() {
-        val allowedPlayers = StatusStore.allowedMusicPlayers(this)
-        if (allowedPlayers.isEmpty()) {
-            StatusStore.setMusicDiagnostic(this, "尚未配置播放器包名")
-            return
-        }
         val candidates = sessions.values.toList() + notifications.values
         val selected = selectMusicCandidate(candidates)
         if (selected == null) {
-            if (currentSource != null) publish(null, MusicPlaybackState.STOPPED, null, null)
             StatusStore.setMusicDiagnostic(
                 this,
-                if (sessions.values.any { it.state != MusicPlaybackState.STOPPED }) {
-                    "已发现媒体会话，但歌曲元数据缺失"
+                if (notifications.isEmpty()) {
+                    "权限已授予，但尚未获取到音乐通知"
                 } else {
-        "权限已授予，但尚未检测到活动媒体会话"
+                    "已获取音乐通知，但歌曲字段不可用或已停止"
                 }
             )
             return
@@ -216,6 +222,7 @@ class MusicNotificationListener : NotificationListenerService() {
         controllers.clear()
         sessions.clear()
         notifications.clear()
+        handler.removeCallbacksAndMessages(null)
         instance = null
         super.onDestroy()
     }

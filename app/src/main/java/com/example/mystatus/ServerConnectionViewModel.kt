@@ -3,7 +3,6 @@ package com.example.mystatus
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,13 +37,7 @@ data class ServerConnectionState(
     val checkedAt: Long = 0L
 )
 
-internal fun healthCheckUrl(endpoint: String): String? =
-    endpoint.toHttpUrlOrNull()?.newBuilder()
-        ?.encodedPath("/healthz")
-        ?.query(null)
-        ?.fragment(null)
-        ?.build()
-        ?.toString()
+internal fun healthCheckUrl(endpoint: String): String? = ServerUrls.healthUrl(endpoint)
 
 class ServerConnectionViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(ServerConnectionState())

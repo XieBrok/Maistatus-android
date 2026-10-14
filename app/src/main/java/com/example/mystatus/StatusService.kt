@@ -9,6 +9,8 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.IBinder
+import android.location.Geocoder
+import android.location.Location
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.ActivityRecognition
@@ -19,12 +21,15 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import org.json.JSONObject
+import java.util.Locale
+import java.util.concurrent.Executors
 
 class StatusService : Service() {
     private val channelId = "status_collection"
     private lateinit var activityClient: ActivityRecognitionClient
     private val locationClient by lazy { LocationServices.getFusedLocationProviderClient(this) }
     private var locationRunning = false
+    private val geocoderExecutor = Executors.newSingleThreadExecutor()
 
     override fun onCreate() {
         super.onCreate()
@@ -100,10 +105,25 @@ class StatusService : Service() {
         override fun onLocationResult(result: LocationResult) {
             if (!StatusStore.collectionEnabled(this@StatusService)) return
             result.lastLocation?.let {
+                resolveAddress(it)
                 EventQueue.enqueue(this@StatusService, "location", JSONObject()
                     .put("latitude", it.latitude).put("longitude", it.longitude)
                     .put("accuracy_meters", it.accuracy)
                     .put("provider", it.provider ?: "unknown"))
+            }
+        }
+
+        private fun resolveAddress(location: Location) {
+            if (!Geocoder.isPresent()) {
+                return
+            }
+            geocoderExecutor.execute {
+                val address = runCatching {
+                    @Suppress("DEPRECATION")
+                    Geocoder(this, Locale.getDefault()).getFromLocation(location.latitude, location.longitude, 1)
+                        ?.firstOrNull()?.getAddressLine(0)?.trim()
+                }.getOrNull()?.takeIf { it.isNotBlank() }
+                if (address != null) StatusStore.setLocationAddress(this, address)
             }
         }
     }
@@ -125,6 +145,7 @@ class StatusService : Service() {
 
     override fun onDestroy() {
         if (locationRunning) locationClient.removeLocationUpdates(locationCallback)
+        geocoderExecutor.shutdownNow()
         if (::activityClient.isInitialized) {
             activityClient.removeActivityUpdates(activityPendingIntent())
         }

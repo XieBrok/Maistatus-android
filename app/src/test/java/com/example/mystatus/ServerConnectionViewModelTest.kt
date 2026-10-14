@@ -9,7 +9,7 @@ class ServerConnectionViewModelTest {
     fun healthCheckUsesOriginForEndpointWithPath() {
         assertEquals(
             "https://example.test/healthz",
-            healthCheckUrl("https://example.test/api/v1/events")
+            healthCheckUrl("https://example.test/api/v1/evens")
         )
     }
 
@@ -17,7 +17,7 @@ class ServerConnectionViewModelTest {
     fun healthCheckRemovesTrailingSlashQueryAndFragment() {
         assertEquals(
             "https://example.test/healthz",
-            healthCheckUrl("https://example.test/api/v1/events/?device=1#status")
+            healthCheckUrl("https://example.test/api/v1/evens/?device=1#status")
         )
     }
 

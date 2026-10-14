@@ -1,6 +1,8 @@
 package com.example.mystatus
 
 import android.media.session.PlaybackState
+import android.app.Notification
+import android.os.Bundle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -42,7 +44,7 @@ class MusicReadingTest {
             "session:token", "com.spotify.music", MusicPlaybackState.PLAYING,
             MusicMetadata("Session", "Artist")
         )
-        assertEquals(session, selectMusicCandidate(listOf(notification, session)))
+        assertEquals(notification, selectMusicCandidate(listOf(notification, session)))
     }
 
     @Test
@@ -57,5 +59,33 @@ class MusicReadingTest {
         )
 
         assertEquals(playing, selectMusicCandidate(listOf(stopped, playing)))
+    }
+
+    @Test
+    fun parsesMediaNotificationWithoutArtist() {
+        val notification = Notification().apply {
+            category = Notification.CATEGORY_TRANSPORT
+            extras.putCharSequence(Notification.EXTRA_TITLE, "Song")
+        }
+        assertEquals("Song", parseNotificationMusicFields(notification)?.title)
+        assertTrue(parseNotificationMusicFields(notification)?.artist == null)
+    }
+
+    @Test
+    fun filtersOrdinaryNotificationAndAcceptsBigTextFallback() {
+        val ordinary = Notification().apply {
+            extras.putCharSequence(Notification.EXTRA_TITLE, "Reminder")
+            extras.putCharSequence(Notification.EXTRA_TEXT, "Take a break")
+        }
+        assertTrue(parseNotificationMusicFields(ordinary) == null)
+        val extras = Bundle().apply {
+            putCharSequence(Notification.EXTRA_TITLE_BIG, "Song")
+            putCharSequence(Notification.EXTRA_BIG_TEXT, "Artist")
+        }
+        val media = Notification().apply {
+            category = Notification.CATEGORY_TRANSPORT
+            this.extras.putAll(extras)
+        }
+        assertEquals("Artist", parseNotificationMusicFields(media)?.artist)
     }
 }
