@@ -15,6 +15,11 @@ object StatusStore {
     private const val LAST_SUCCESSFUL_UPLOAD = "last_successful_upload"
     private const val MUSIC_STATE = "music_state"
     private const val COLLECTION_ENABLED = "collection_enabled"
+    private const val MUSIC_PACKAGE = "music_package"
+    private const val MUSIC_TITLE = "music_title"
+    private const val MUSIC_ARTIST = "music_artist"
+    private const val MUSIC_LAST_READ = "music_last_read"
+    private const val MUSIC_DIAGNOSTIC = "music_diagnostic"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -32,10 +37,10 @@ object StatusStore {
         prefs(context).edit().putString(DEVICE_CREDENTIAL, value.trim()).apply()
 
     fun allowedMusicPlayers(context: Context): Set<String> =
-        prefs(context).getStringSet(ALLOWED_PLAYERS, emptySet()) ?: emptySet()
+        prefs(context).getStringSet(ALLOWED_PLAYERS, emptySet())?.toSet() ?: emptySet()
 
     fun setAllowedMusicPlayers(context: Context, packages: Set<String>) =
-        prefs(context).edit().putStringSet(ALLOWED_PLAYERS, packages).apply()
+        prefs(context).edit().putStringSet(ALLOWED_PLAYERS, packages.toSet()).apply()
 
     fun activity(context: Context): String =
         prefs(context).getString(ACTIVITY, "UNKNOWN") ?: "UNKNOWN"
@@ -82,4 +87,35 @@ object StatusStore {
 
     fun setCollectionEnabled(context: Context, value: Boolean) =
         prefs(context).edit().putBoolean(COLLECTION_ENABLED, value).apply()
+
+    fun musicPackage(context: Context): String? = prefs(context).getString(MUSIC_PACKAGE, null)
+    fun musicTitle(context: Context): String? = prefs(context).getString(MUSIC_TITLE, null)
+    fun musicArtist(context: Context): String? = prefs(context).getString(MUSIC_ARTIST, null)
+    fun musicLastRead(context: Context): Long = prefs(context).getLong(MUSIC_LAST_READ, 0L)
+    fun musicDiagnostic(context: Context): String =
+        prefs(context).getString(MUSIC_DIAGNOSTIC, "采集功能未启动") ?: "采集功能未启动"
+
+    fun setMusicReading(
+        context: Context,
+        packageName: String?,
+        title: String?,
+        artist: String?,
+        state: String,
+        diagnostic: String,
+        readAt: Long = System.currentTimeMillis()
+    ) {
+        prefs(context).edit()
+            .putString(MUSIC_PACKAGE, packageName)
+            .putString(MUSIC_TITLE, title)
+            .putString(MUSIC_ARTIST, artist)
+            .putString(MUSIC, listOfNotNull(title, artist?.takeIf { it.isNotBlank() }).joinToString(" - ")
+                .ifBlank { null })
+            .putString(MUSIC_STATE, state)
+            .putString(MUSIC_DIAGNOSTIC, diagnostic)
+            .putLong(MUSIC_LAST_READ, readAt)
+            .apply()
+    }
+
+    fun setMusicDiagnostic(context: Context, diagnostic: String) =
+        prefs(context).edit().putString(MUSIC_DIAGNOSTIC, diagnostic).apply()
 }
