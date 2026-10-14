@@ -18,7 +18,7 @@ data class MusicMetadata(
     val artist: String?,
     val album: String? = null
 ) {
-    val isUsable: Boolean get() = !title.isNullOrBlank() && !artist.isNullOrBlank()
+    val isUsable: Boolean get() = !title.isNullOrBlank()
 }
 
 object MusicPlayers {
@@ -45,8 +45,8 @@ internal data class MusicCandidate(
 internal fun selectMusicCandidate(candidates: Collection<MusicCandidate>): MusicCandidate? =
     candidates.sortedWith(
         compareByDescending<MusicCandidate> { it.state == MusicPlaybackState.PLAYING }
-            .thenByDescending { it.sourceId.startsWith("session:") }
             .thenByDescending { it.state == MusicPlaybackState.PAUSED }
+            .thenByDescending { it.sourceId.startsWith("session:") }
     ).firstOrNull {
         it.state != MusicPlaybackState.STOPPED && it.metadata?.isUsable == true
     }

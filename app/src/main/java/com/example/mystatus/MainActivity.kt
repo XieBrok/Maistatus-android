@@ -182,7 +182,7 @@ private fun MyStatusApp(serverConnectionViewModel: ServerConnectionViewModel) {
                     onSave = { url, token, players ->
                         if (!url.startsWith("https://", true)) {
                             scope.launch { snackbar.showSnackbar("服务器地址必须使用 HTTPS") }
-                        } else if (players.any { !it.matches(Regex("[A-Za-z0-9_.]+")) }) {
+                        } else if (players.any { !MusicPlayers.isValidPackage(it) }) {
                             scope.launch { snackbar.showSnackbar("播放器包名格式不正确") }
                         } else {
                             StatusStore.setServerUrl(context, url)
@@ -360,18 +360,30 @@ private fun ServerConnectionCard(
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
         Row(
-            Modifier.padding(20.dp),
+            Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(36.dp), tint = color)
-            Spacer(Modifier.width(16.dp))
-            Column {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(28.dp), tint = color)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("服务器连接", style = MaterialTheme.typography.labelLarge)
-                Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                Text(state.detail.ifBlank { defaultDetail }, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    state.detail.ifBlank { defaultDetail },
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
                 TextButton(onClick = onCheck) { Text("重新检查") }
             }
         }
@@ -441,7 +453,11 @@ private fun ActivityCard(state: DashboardState) {
 
 @Composable
 private fun StatusCard(icon: ImageVector, title: String, value: String, supporting: String, content: @Composable () -> Unit = {}) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
@@ -450,7 +466,12 @@ private fun StatusCard(icon: ImageVector, title: String, value: String, supporti
             }
             Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(supporting, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                supporting,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
             content()
         }
     }
@@ -513,6 +534,14 @@ private fun SettingsScreen(
             item { SettingsAction("立即同步") { onSync() } }
             item { SettingsHeader("音乐来源设置") }
             item { MusicSourcesEditor(playersText, onChange = { playersText = it }) }
+            item {
+                val configured = StatusStore.allowedMusicPlayers(context)
+                Text(
+                    "已配置播放器：${configured.size} 个${if (configured.isEmpty()) "" else "（${configured.joinToString("、")}）"}",
+                    Modifier.padding(horizontal = 16.dp),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
             item { Text("状态：${state.musicDiagnostic}", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
             item { Text("只接收已选择包名的媒体通知；可见应用受 Android 11 应用可见性规则限制。", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
             item { SettingsAction("保存播放器来源") {
@@ -553,11 +582,15 @@ private fun MusicSourcesEditor(value: String, onChange: (String) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     var refresh by remember { mutableStateOf(0) }
     var apps by remember(refresh) { mutableStateOf<List<InstalledMusicApp>>(emptyList()) }
+    var loading by remember(refresh) { mutableStateOf(true) }
+    var loadError by remember(refresh) { mutableStateOf<String?>(null) }
     val selected = remember(value) {
         value.split(",").map(String::trim).filter(String::isNotEmpty).toSet()
     }
     LaunchedEffect(refresh) {
-        apps = withContext(Dispatchers.IO) {
+        loading = true
+        loadError = null
+        val result = withContext(Dispatchers.IO) {
             runCatching {
                 val installed = if (Build.VERSION.SDK_INT >= 33) {
                     context.packageManager.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
@@ -567,7 +600,9 @@ private fun MusicSourcesEditor(value: String, onChange: (String) -> Unit) {
                 }
                 installed
                     .map { InstalledMusicApp(
-                        context.packageManager.getApplicationLabel(it).toString(), it.packageName
+                        context.packageManager.getApplicationLabel(it).toString()
+                            .trim().ifBlank { it.packageName },
+                        it.packageName
                     ) }
                     .filter { app ->
                         app.packageName in selected ||
@@ -576,8 +611,14 @@ private fun MusicSourcesEditor(value: String, onChange: (String) -> Unit) {
                             MusicPlayers.knownPackages.values.contains(app.packageName)
                     }
                     .sortedBy { it.label.lowercase() }
-            }.getOrElse { emptyList() }
+            }.fold(
+                onSuccess = { it to null },
+                onFailure = { emptyList<InstalledMusicApp>() to (it.message ?: "系统拒绝了应用查询") }
+            )
         }
+        apps = result.first
+        loadError = result.second
+        loading = false
     }
     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -588,6 +629,16 @@ private fun MusicSourcesEditor(value: String, onChange: (String) -> Unit) {
             value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(),
             label = { Text("搜索应用名称或包名") }, singleLine = true
         )
+        if (loading) {
+            Text("正在读取符合查询范围的已安装音乐应用…", style = MaterialTheme.typography.bodyMedium)
+        } else if (loadError != null) {
+            Text("读取应用列表失败：$loadError", color = MaterialTheme.colorScheme.error)
+        } else if (apps.isEmpty()) {
+            Text(
+                "没有检测到符合查询范围的音乐应用。请确认播放器已安装，或直接输入合法包名；Android 11+ 的应用可见性可能限制列表结果。",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
         apps.filter {
             query.isBlank() || it.label.contains(query, true) || it.packageName.contains(query, true)
         }.forEach { app ->
@@ -630,7 +681,8 @@ private fun SettingsAction(text: String, onClick: () -> Unit) {
 private fun InfoRow(icon: ImageVector, label: String, value: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(8.dp)); Text("$label：$value", style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.width(8.dp))
+        Text("$label：$value", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
     }
 }
 

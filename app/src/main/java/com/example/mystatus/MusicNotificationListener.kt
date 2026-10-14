@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.Log
 import org.json.JSONObject
 
 private typealias MusicReading = MusicCandidate
@@ -45,8 +46,24 @@ class MusicNotificationListener : NotificationListenerService() {
                 getActiveNotifications().orEmpty().forEach(::processNotification)
             }.onFailure {
                 StatusStore.setMusicDiagnostic(this, "通知监听已连接，但媒体会话权限尚未满足")
+                Log.w(TAG, "Unable to initialize media session manager", it)
             }
         }
+    }
+
+    override fun onListenerDisconnected() {
+        handler.post {
+            sessionManager?.removeOnActiveSessionsChangedListener(sessionsChanged)
+            callbacks.forEach { (sourceId, callback) ->
+                controllers[sourceId]?.unregisterCallback(callback)
+            }
+            callbacks.clear()
+            controllers.clear()
+            sessions.clear()
+            instance = null
+            StatusStore.setMusicDiagnostic(this, "通知监听服务已断开，等待系统重新连接")
+        }
+        super.onListenerDisconnected()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
@@ -105,7 +122,9 @@ class MusicNotificationListener : NotificationListenerService() {
             runCatching { controller.registerCallback(callback, handler) }
             sessions[sourceId] = readingFor(controller, sourceId)
         }
-        if (activeControllers.isEmpty() && notifications.isEmpty()) {
+        if (activeControllers.isNotEmpty() && sessions.isEmpty() && notifications.isEmpty()) {
+            StatusStore.setMusicDiagnostic(this, "检测到媒体会话，但没有匹配已配置的播放器")
+        } else if (activeControllers.isEmpty() && notifications.isEmpty()) {
             StatusStore.setMusicDiagnostic(this, "权限已授予，但尚未检测到活动媒体会话")
         }
         recompute()
@@ -138,7 +157,11 @@ class MusicNotificationListener : NotificationListenerService() {
         )
 
     private fun recompute() {
-        if (!StatusStore.collectionEnabled(this)) return
+        val allowedPlayers = StatusStore.allowedMusicPlayers(this)
+        if (allowedPlayers.isEmpty()) {
+            StatusStore.setMusicDiagnostic(this, "尚未配置播放器包名")
+            return
+        }
         val candidates = sessions.values.toList() + notifications.values
         val selected = selectMusicCandidate(candidates)
         if (selected == null) {
@@ -166,17 +189,19 @@ class MusicNotificationListener : NotificationListenerService() {
         val title = metadata?.title
         val artist = metadata?.artist
         val signature = "$sourceId|$stateValue|$packageName|$title|$artist"
-        if (eventDeduper.isDuplicate(signature)) return
+        val duplicate = eventDeduper.isDuplicate(signature)
         currentSource = sourceId
         StatusStore.setMusicReading(this, packageName, title, artist, stateValue,
             if (state == MusicPlaybackState.STOPPED) "已停止播放" else if (artist.isNullOrBlank())
                 "已读取歌曲，但艺术家元数据缺失" else "已成功读取歌曲")
-        EventQueue.enqueue(this, "music", JSONObject().apply {
-            put("state", stateValue)
-            if (!title.isNullOrBlank()) put("title", title)
-            if (!artist.isNullOrBlank()) put("artist", artist)
-            if (!packageName.isNullOrBlank()) put("package", packageName)
-        })
+        if (!duplicate) {
+            EventQueue.enqueue(this, "music", JSONObject().apply {
+                put("state", stateValue)
+                if (!title.isNullOrBlank()) put("title", title)
+                if (!artist.isNullOrBlank()) put("artist", artist)
+                if (!packageName.isNullOrBlank()) put("package", packageName)
+            })
+        }
         if (state == MusicPlaybackState.STOPPED) currentSource = null
     }
 
@@ -196,6 +221,7 @@ class MusicNotificationListener : NotificationListenerService() {
     }
 
     companion object {
+        private const val TAG = "MusicNotificationListener"
         @Volatile private var instance: MusicNotificationListener? = null
         fun refreshConfiguredSources() {
             val service = instance ?: return

@@ -16,10 +16,10 @@ class MusicReadingTest {
     }
 
     @Test
-    fun requiresTitleAndArtistForUsableMetadata() {
+    fun titleIsRequiredButArtistMayBeMissing() {
         assertTrue(MusicMetadata("Song", "Artist").isUsable)
         assertFalse(MusicMetadata("", "Artist").isUsable)
-        assertFalse(MusicMetadata("Song", null).isUsable)
+        assertTrue(MusicMetadata("Song", null).isUsable)
     }
 
     @Test
@@ -43,5 +43,19 @@ class MusicReadingTest {
             MusicMetadata("Session", "Artist")
         )
         assertEquals(session, selectMusicCandidate(listOf(notification, session)))
+    }
+
+    @Test
+    fun ignoresStoppedCandidatesAndKeepsSongWhenArtistIsMissing() {
+        val stopped = MusicCandidate(
+            "session:stopped", "com.spotify.music", MusicPlaybackState.STOPPED,
+            MusicMetadata("Old song", "Artist")
+        )
+        val playing = MusicCandidate(
+            "session:playing", "com.spotify.music", MusicPlaybackState.PLAYING,
+            MusicMetadata("Current song", null)
+        )
+
+        assertEquals(playing, selectMusicCandidate(listOf(stopped, playing)))
     }
 }
