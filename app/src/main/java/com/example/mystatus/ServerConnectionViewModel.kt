@@ -64,7 +64,7 @@ class ServerConnectionViewModel(application: Application) : AndroidViewModel(app
 
     private fun check(endpoint: String): ServerConnectionState {
         val checkedAt = System.currentTimeMillis()
-        val healthUrl = endpoint.trimEnd('/') + "/health"
+        val healthUrl = endpoint.trimEnd('/') + HEALTH_PATH
         val url = try {
             URL(healthUrl)
         } catch (_: MalformedURLException) {
@@ -111,7 +111,7 @@ class ServerConnectionViewModel(application: Application) : AndroidViewModel(app
                 )
                 code == HttpURLConnection.HTTP_NOT_FOUND -> ServerConnectionState(
                     ServerConnectionStatus.HTTP_ERROR,
-                    "服务端尚未实现 /health 健康检查接口",
+                    "服务端尚未实现 $HEALTH_PATH 健康检查接口",
                     checkedAt
                 )
                 else -> ServerConnectionState(
@@ -140,6 +140,7 @@ class ServerConnectionViewModel(application: Application) : AndroidViewModel(app
     }
 
     companion object {
+        const val HEALTH_PATH = "/healthz"
         private const val CONNECT_TIMEOUT_MS = 8_000
         private const val READ_TIMEOUT_MS = 8_000
     }

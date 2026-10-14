@@ -321,7 +321,7 @@ private fun ServerConnectionCard(
             MaterialTheme.colorScheme.error
         )
         ServerConnectionStatus.CHECKING -> ConnectionCopy(
-            "检查中", "正在请求 /health，请稍候", Icons.Default.CloudUpload,
+            "检查中", "正在请求 ${ServerConnectionViewModel.HEALTH_PATH}，请稍候", Icons.Default.CloudUpload,
             MaterialTheme.colorScheme.primary
         )
         ServerConnectionStatus.CONNECTED -> ConnectionCopy(
