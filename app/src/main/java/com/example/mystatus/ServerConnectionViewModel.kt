@@ -3,6 +3,7 @@ package com.example.mystatus
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +38,14 @@ data class ServerConnectionState(
     val checkedAt: Long = 0L
 )
 
+internal fun healthCheckUrl(endpoint: String): String? =
+    endpoint.toHttpUrlOrNull()?.newBuilder()
+        ?.encodedPath("/healthz")
+        ?.query(null)
+        ?.fragment(null)
+        ?.build()
+        ?.toString()
+
 class ServerConnectionViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(ServerConnectionState())
     val state: StateFlow<ServerConnectionState> = _state.asStateFlow()
@@ -64,9 +73,9 @@ class ServerConnectionViewModel(application: Application) : AndroidViewModel(app
 
     private fun check(endpoint: String): ServerConnectionState {
         val checkedAt = System.currentTimeMillis()
-        val healthUrl = endpoint.trimEnd('/') + HEALTH_PATH
+        val healthUrl = healthCheckUrl(endpoint)
         val url = try {
-            URL(healthUrl)
+            URL(healthUrl ?: throw MalformedURLException())
         } catch (_: MalformedURLException) {
             return ServerConnectionState(
                 ServerConnectionStatus.CONNECTION_FAILED,
@@ -112,6 +121,27 @@ class ServerConnectionViewModel(application: Application) : AndroidViewModel(app
                 code == HttpURLConnection.HTTP_NOT_FOUND -> ServerConnectionState(
                     ServerConnectionStatus.HTTP_ERROR,
                     "服务端尚未实现 $HEALTH_PATH 健康检查接口",
+                    checkedAt
+                )
+                code == HttpURLConnection.HTTP_UNAUTHORIZED ||
+                    code == HttpURLConnection.HTTP_FORBIDDEN -> ServerConnectionState(
+                    ServerConnectionStatus.HTTP_ERROR,
+                    "健康检查接口认证失败（HTTP $code）",
+                    checkedAt
+                )
+                code == HttpURLConnection.HTTP_CLIENT_TIMEOUT -> ServerConnectionState(
+                    ServerConnectionStatus.TIMEOUT,
+                    "健康检查请求超时（HTTP $code）",
+                    checkedAt
+                )
+                code == 429 -> ServerConnectionState(
+                    ServerConnectionStatus.HTTP_ERROR,
+                    "健康检查请求过于频繁（HTTP $code）",
+                    checkedAt
+                )
+                code in 500..599 -> ServerConnectionState(
+                    ServerConnectionStatus.HTTP_ERROR,
+                    "服务端暂时不可用（HTTP $code）",
                     checkedAt
                 )
                 else -> ServerConnectionState(
