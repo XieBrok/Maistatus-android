@@ -143,8 +143,14 @@ class MusicNotificationListener : NotificationListenerService() {
         val selected = selectMusicCandidate(candidates)
         if (selected == null) {
             if (currentSource != null) publish(null, MusicPlaybackState.STOPPED, null, null)
-            StatusStore.setMusicDiagnostic(this, if (sessions.any { it.state != MusicPlaybackState.STOPPED })
-                "已发现媒体会话，但歌曲元数据缺失" else "权限已授予，但尚未检测到活动媒体会话")
+            StatusStore.setMusicDiagnostic(
+                this,
+                if (sessions.values.any { it.state != MusicPlaybackState.STOPPED }) {
+                    "已发现媒体会话，但歌曲元数据缺失"
+                } else {
+        "权限已授予，但尚未检测到活动媒体会话"
+                }
+            )
             return
         }
         publish(selected.sourceId, selected.state, selected.metadata, selected.packageName)
