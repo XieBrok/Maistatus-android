@@ -9,6 +9,10 @@ import android.util.Log
 import org.json.JSONObject
 
 class MusicNotificationListener : NotificationListenerService() {
+    private val MUSIC_PACKAGE_ALLOWLIST = setOf(
+        "com.netease.cloudmusic",
+        "com.tencent.qqmusic"
+    )
     private val handler = Handler(Looper.getMainLooper())
     private val notifications = mutableMapOf<String, MusicCandidate>()
     private val eventDeduper = MusicEventDeduper()
@@ -43,10 +47,12 @@ class MusicNotificationListener : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        if (!isAllowedMusicPackage(sbn.packageName)) return
         handler.post { processNotification(sbn) }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        if (!isAllowedMusicPackage(sbn.packageName)) return
         handler.post {
             if (notifications.remove(sbn.key) != null) recompute()
         }
@@ -58,6 +64,10 @@ class MusicNotificationListener : NotificationListenerService() {
     }
 
     private fun updateNotification(sbn: StatusBarNotification) {
+        if (!isAllowedMusicPackage(sbn.packageName)) {
+            notifications.remove(sbn.key)
+            return
+        }
         val fields = runCatching { parseNotificationMusicFields(sbn.notification) }.getOrNull()
         if (fields == null) {
             notifications.remove(sbn.key)
@@ -70,6 +80,9 @@ class MusicNotificationListener : NotificationListenerService() {
             )
         }
     }
+
+    private fun isAllowedMusicPackage(packageName: String): Boolean =
+        packageName in MUSIC_PACKAGE_ALLOWLIST
 
     private fun recompute() {
         val selected = selectMusicCandidate(notifications.values)
