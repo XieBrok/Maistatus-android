@@ -179,7 +179,7 @@ private fun MyStatusApp(serverConnectionViewModel: ServerConnectionViewModel) {
                         else StatusService.ACTION_PAUSE_LOCATION
                         context.startService(Intent(context, StatusService::class.java).setAction(action))
                     },
-                    onSave = { url, token, _ ->
+                    onSave = { url, token ->
                         val normalized = ServerUrls.normalizeBaseUrl(url)
                         if (normalized == null) {
                             scope.launch { snackbar.showSnackbar("请输入合法的 HTTPS 服务器主域名") }
@@ -498,7 +498,7 @@ private fun SettingsScreen(
     onNotificationPermission: () -> Unit,
     onNotificationSettings: () -> Unit,
     onPauseLocation: () -> Unit,
-    onSave: (String, String, List<String>) -> Unit,
+    onSave: (String, String) -> Unit,
     onSync: () -> Unit
 ) {
     val context = LocalContext.current
@@ -552,14 +552,14 @@ private fun SettingsScreen(
             }
             item { EditorRow("设备 Token", token, true) { token = it } }
             item { Text("Token 仅保存在应用私有存储中，不会在日志或首页显示", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
-            item { SettingsAction("保存配置") { onSave(url.trim(), token, emptyList()) } }
+            item { SettingsAction("保存配置") { onSave(url.trim(), token) } }
             item { SettingsHeader("同步设置") }
             item { SettingRow("定时补报间隔", "15 分钟（WorkManager）") }
             item { SettingRow("当前待上传事件", "${state.pending} 条") }
             item { SettingsAction("立即同步") { onSync() } }
             item { Text("状态：${state.musicDiagnostic}", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
             item { SettingsAction("诊断音乐读取") {
-                MusicNotificationListener.refreshConfiguredSources()
+                MusicNotificationListener.refreshActiveNotifications()
             } }
             item { SettingsHeader("隐私与数据") }
             item { SettingRow("权限概览", "定位：${state.location}；活动：${if (state.activityPermission) "已授权" else "未授权"}") }

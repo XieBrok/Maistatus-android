@@ -8,7 +8,6 @@ object StatusStore {
     private const val ACTIVITY = "activity"
     private const val MUSIC = "music"
     private const val MUSIC_KEY = "music_key"
-    private const val ALLOWED_PLAYERS = "allowed_players"
     private const val DEVICE_CREDENTIAL = "device_credential"
     private const val LOCATION_PAUSED = "location_paused"
     private const val LAST_UPDATE = "last_update"
@@ -18,6 +17,7 @@ object StatusStore {
     private const val MUSIC_PACKAGE = "music_package"
     private const val MUSIC_TITLE = "music_title"
     private const val MUSIC_ARTIST = "music_artist"
+    private const val MUSIC_ALBUM = "music_album"
     private const val MUSIC_LAST_READ = "music_last_read"
     private const val MUSIC_DIAGNOSTIC = "music_diagnostic"
     private const val LOCATION_ADDRESS = "location_address"
@@ -39,12 +39,6 @@ object StatusStore {
 
     fun setDeviceCredential(context: Context, value: String) =
         prefs(context).edit().putString(DEVICE_CREDENTIAL, value.trim()).apply()
-
-    fun allowedMusicPlayers(context: Context): Set<String> =
-        prefs(context).getStringSet(ALLOWED_PLAYERS, emptySet())?.toSet() ?: emptySet()
-
-    fun setAllowedMusicPlayers(context: Context, packages: Set<String>) =
-        prefs(context).edit().putStringSet(ALLOWED_PLAYERS, packages.toSet()).apply()
 
     fun activity(context: Context): String =
         prefs(context).getString(ACTIVITY, "UNKNOWN") ?: "UNKNOWN"
@@ -95,6 +89,7 @@ object StatusStore {
     fun musicPackage(context: Context): String? = prefs(context).getString(MUSIC_PACKAGE, null)
     fun musicTitle(context: Context): String? = prefs(context).getString(MUSIC_TITLE, null)
     fun musicArtist(context: Context): String? = prefs(context).getString(MUSIC_ARTIST, null)
+    fun musicAlbum(context: Context): String? = prefs(context).getString(MUSIC_ALBUM, null)
     fun musicLastRead(context: Context): Long = prefs(context).getLong(MUSIC_LAST_READ, 0L)
     fun musicDiagnostic(context: Context): String =
         prefs(context).getString(MUSIC_DIAGNOSTIC, "采集功能未启动") ?: "采集功能未启动"
@@ -104,6 +99,7 @@ object StatusStore {
         packageName: String?,
         title: String?,
         artist: String?,
+        album: String?,
         state: String,
         diagnostic: String,
         readAt: Long = System.currentTimeMillis()
@@ -112,6 +108,7 @@ object StatusStore {
             .putString(MUSIC_PACKAGE, packageName)
             .putString(MUSIC_TITLE, title)
             .putString(MUSIC_ARTIST, artist)
+            .putString(MUSIC_ALBUM, album)
             .putString(MUSIC, listOfNotNull(title, artist?.takeIf { it.isNotBlank() }).joinToString(" - ")
                 .ifBlank { null })
             .putString(MUSIC_STATE, state)
