@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -423,12 +424,12 @@ private fun CollectionCard(state: DashboardState) {
 
 @Composable
 private fun MusicCard(state: DashboardState) {
-    val label = when (state.musicState) {
-        "playing" -> "播放中"
-        "paused" -> "已暂停"
-        "stopped" -> "已停止"
-        else -> if (!state.notificationPermission) "通知监听未授权" else "未检测到歌曲"
-    }
+    val label = musicStatusLabel(
+        state.musicState,
+        hasSong = !state.music.isNullOrBlank(),
+        notificationPermission = state.notificationPermission
+    )
+    Log.d(MUSIC_LOG_TAG, "home music state=$label, state=${state.musicState}, package=${state.musicPackage}")
     StatusCard(Icons.Default.MusicNote, "音乐状态", label, state.music ?: state.musicDiagnostic) {
         state.musicPackage?.let { Text("来源：$it", style = MaterialTheme.typography.bodySmall) }
         if (state.musicLastRead > 0) Text("最近读取：${formatTime(state.musicLastRead)}", style = MaterialTheme.typography.bodySmall)

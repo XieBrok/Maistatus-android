@@ -69,6 +69,12 @@ class MusicNotificationListener : NotificationListenerService() {
             return
         }
         val fields = runCatching { parseNotificationMusicFields(sbn.notification) }.getOrNull()
+        Log.i(
+            TAG,
+            "Notification package=${sbn.packageName}, " +
+                "parsedTitle=${fields?.title}, parsedArtist=${fields?.artist}, " +
+                "state=${fields?.state ?: "ignored"}, basis=${fields?.let { stateBasis(sbn.notification, it.state) } ?: "not_music"}"
+        )
         if (fields == null) {
             notifications.remove(sbn.key)
         } else {
@@ -106,6 +112,15 @@ class MusicNotificationListener : NotificationListenerService() {
         if (signature == lastPublishedSignature) return
         lastPublishedSignature = signature
         val duplicate = eventDeduper.isDuplicate(signature)
+        val previousTitle = StatusStore.musicTitle(this)
+        val previousArtist = StatusStore.musicArtist(this)
+        val previousState = StatusStore.musicState(this)
+        Log.i(
+            TAG,
+            "Music state update before=[$previousTitle, $previousArtist, $previousState], " +
+                "package=${candidate.packageName}, " +
+                "title=${metadata.title}, artist=${metadata.artist}, state=$stateValue"
+        )
         StatusStore.setMusicReading(
             this,
             candidate.packageName,
@@ -116,6 +131,11 @@ class MusicNotificationListener : NotificationListenerService() {
             if (candidate.state == MusicPlaybackState.PAUSED) "通知显示已暂停"
             else if (metadata.artist.isNullOrBlank()) "已读取歌曲，但艺术家元数据缺失"
             else "已成功读取歌曲"
+        )
+        Log.i(
+            TAG,
+            "Music state update after=[${StatusStore.musicTitle(this)}, " +
+                "${StatusStore.musicArtist(this)}, ${StatusStore.musicState(this)}]"
         )
         if (!duplicate) {
             EventQueue.enqueue(this, "music", JSONObject().apply {
@@ -129,7 +149,11 @@ class MusicNotificationListener : NotificationListenerService() {
     }
 
     private fun clearMusicIfNeeded() {
-        if (lastPublishedSignature == null) return
+        val hadPersistedMusic = lastPublishedSignature != null ||
+            !StatusStore.musicTitle(this).isNullOrBlank() ||
+            !StatusStore.music(this).isNullOrBlank()
+        if (!hadPersistedMusic) return
+        Log.i(TAG, "Music state update cleared: no reliable music notification remains")
         lastPublishedSignature = null
         StatusStore.setMusicReading(
             this, null, null, null, null, MusicPlaybackState.UNKNOWN.name.lowercase(),
@@ -145,8 +169,20 @@ class MusicNotificationListener : NotificationListenerService() {
         super.onDestroy()
     }
 
+    private fun stateBasis(notification: Notification, state: MusicPlaybackState): String =
+        when (state) {
+            MusicPlaybackState.PAUSED -> "pause marker in standard notification fields"
+            MusicPlaybackState.PLAYING -> when {
+                notification.category == Notification.CATEGORY_TRANSPORT -> "transport category"
+                notification.extras.containsKey(Notification.EXTRA_MEDIA_SESSION) -> "media session"
+                else -> "ongoing notification"
+            }
+            MusicPlaybackState.STOPPED -> "explicit stopped state"
+            MusicPlaybackState.UNKNOWN -> "no reliable playback marker"
+        }
+
     companion object {
-        private const val TAG = "MusicNotificationListener"
+        private const val TAG = MUSIC_LOG_TAG
         @Volatile private var instance: MusicNotificationListener? = null
 
         fun refreshActiveNotifications() {

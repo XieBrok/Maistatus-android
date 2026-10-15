@@ -5,6 +5,8 @@ import android.os.Bundle
 
 enum class MusicPlaybackState { PLAYING, PAUSED, STOPPED, UNKNOWN }
 
+internal const val MUSIC_LOG_TAG = "MusicStatus"
+
 data class MusicMetadata(
     val title: String?,
     val artist: String?,
@@ -76,6 +78,19 @@ internal fun selectMusicCandidate(candidates: Collection<MusicCandidate>): Music
     ).firstOrNull {
         it.state != MusicPlaybackState.STOPPED && it.metadata?.isUsable == true
     }
+
+internal fun musicStatusLabel(
+    musicState: String?,
+    hasSong: Boolean,
+    notificationPermission: Boolean
+): String = when {
+    !hasSong && !notificationPermission -> "通知监听未授权"
+    !hasSong -> "未检测到歌曲"
+    musicState == MusicPlaybackState.PLAYING.name.lowercase() -> "播放中"
+    musicState == MusicPlaybackState.PAUSED.name.lowercase() -> "已暂停"
+    musicState == MusicPlaybackState.STOPPED.name.lowercase() -> "已停止"
+    else -> "播放状态未知"
+}
 
 internal class MusicEventDeduper {
     private var last: String? = null

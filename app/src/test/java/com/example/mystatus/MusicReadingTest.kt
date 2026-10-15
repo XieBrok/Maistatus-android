@@ -115,4 +115,24 @@ class MusicReadingTest {
         assertEquals(candidate, selectMusicCandidate(listOf(candidate)))
         assertNull(selectMusicCandidate(emptyList()))
     }
+
+    @Test
+    fun knownSongWithUnknownPlaybackStateIsNotShownAsMissing() {
+        assertEquals(
+            "播放状态未知",
+            musicStatusLabel("unknown", hasSong = true, notificationPermission = true)
+        )
+        assertEquals(
+            "未检测到歌曲",
+            musicStatusLabel("unknown", hasSong = false, notificationPermission = true)
+        )
+    }
+
+    @Test
+    fun musicStatusLabelDistinguishesPlaybackStates() {
+        assertEquals("播放中", musicStatusLabel("playing", true, true))
+        assertEquals("已暂停", musicStatusLabel("paused", true, true))
+        assertEquals("已停止", musicStatusLabel("stopped", true, true))
+        assertEquals("通知监听未授权", musicStatusLabel(null, false, false))
+    }
 }
