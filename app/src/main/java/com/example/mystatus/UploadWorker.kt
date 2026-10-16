@@ -29,10 +29,39 @@ class UploadWorker(context: Context, params: WorkerParameters) : Worker(context,
         if (endpoint.isBlank() || credential.isBlank()) return Result.failure()
         val eventsEndpoint = ServerUrls.eventsUrl(endpoint) ?: return Result.failure()
         val url = try { URL(eventsEndpoint) } catch (_: MalformedURLException) { return Result.failure() }
-        if (!UploadPolicy.isAllowedEndpoint(eventsEndpoint)) return Result.failure()
+        val heartbeatEndpoint = ServerUrls.heartbeatUrl(endpoint) ?: return Result.failure()
+        val heartbeatUrl = try { URL(heartbeatEndpoint) } catch (_: MalformedURLException) { return Result.failure() }
+        if (!UploadPolicy.isAllowedEndpoint(eventsEndpoint) || !UploadPolicy.isAllowedEndpoint(heartbeatEndpoint)) {
+            return Result.failure()
+        }
 
         val dao = AppDatabase.get(applicationContext).eventDao()
         return try {
+            // Best-effort heartbeat means an idle device can still appear recently active.
+            // A failed heartbeat must not prevent queued status events from being uploaded.
+            try {
+                val heartbeat = (heartbeatUrl.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 10_000
+                    readTimeout = 10_000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    setRequestProperty("Authorization", "Bearer $credential")
+                }
+                try {
+                    val heartbeatBody = JSONObject()
+                        .put("device_id", StatusStore.deviceId(applicationContext))
+                        .put("device_name", StatusStore.deviceName())
+                        .put("platform", "android")
+                    heartbeat.outputStream.use { it.write(heartbeatBody.toString().toByteArray(Charsets.UTF_8)) }
+                    heartbeat.responseCode
+                } finally {
+                    heartbeat.disconnect()
+                }
+            } catch (_: IOException) {
+                // Uploads below may still succeed; the next worker run retries the heartbeat.
+            }
+
             dao.pending(50).forEach { event ->
                 val connection = (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
@@ -48,6 +77,9 @@ class UploadWorker(context: Context, params: WorkerParameters) : Worker(context,
                         .put("event_id", event.eventId)
                         .put("event_time", event.occurredAt)
                         .put("event_type", event.type)
+                        .put("device_id", StatusStore.deviceId(applicationContext))
+                        .put("device_name", StatusStore.deviceName())
+                        .put("platform", "android")
                     connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
                     val code = connection.responseCode
                     when {
