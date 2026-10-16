@@ -7,13 +7,14 @@ import org.junit.Test
 class ServerUrlsTest {
     @Test fun buildsStandardHttpsUrls() {
         assertEquals("https://status.example.com/", ServerUrls.normalizeBaseUrl("https://status.example.com"))
-        assertEquals("https://status.example.com/api/v1/evens", ServerUrls.eventsUrl("https://status.example.com"))
+        assertEquals("https://status.example.com/api/v1/events", ServerUrls.eventsUrl("https://status.example.com"))
         assertEquals("https://status.example.com/healthz", ServerUrls.healthUrl("https://status.example.com"))
+        assertEquals("https://status.example.com/api/v1/devices/heartbeat", ServerUrls.heartbeatUrl("https://status.example.com"))
     }
 
     @Test fun acceptsTrailingSlashAndMigratesHistoricalPaths() {
         assertEquals("https://status.example.com/", ServerUrls.normalizeBaseUrl("https://status.example.com/"))
-        assertEquals("https://status.example.com/", ServerUrls.normalizeBaseUrl("https://status.example.com/api/v1/evens"))
+        assertEquals("https://status.example.com/", ServerUrls.normalizeBaseUrl("https://status.example.com/api/v1/events"))
         assertEquals("https://status.example.com/", ServerUrls.normalizeBaseUrl("https://status.example.com/healthz"))
     }
 
@@ -22,6 +23,6 @@ class ServerUrlsTest {
         assertNull(ServerUrls.normalizeBaseUrl("https://status.example.com?token=1"))
         assertNull(ServerUrls.normalizeBaseUrl("https://status.example.com#health"))
         assertNull(ServerUrls.normalizeBaseUrl("https://status.example.com/api/v1/evens/healthz"))
-        assertNull(ServerUrls.normalizeBaseUrl("https://status.example.com/api/v1/events"))
+        assertEquals("https://status.example.com/", ServerUrls.normalizeBaseUrl("https://status.example.com/api/v1/evens"))
     }
 }
