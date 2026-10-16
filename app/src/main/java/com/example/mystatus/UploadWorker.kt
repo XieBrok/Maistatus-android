@@ -1,7 +1,6 @@
 package com.example.mystatus
 
 import android.content.Context
-import android.os.Build
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
