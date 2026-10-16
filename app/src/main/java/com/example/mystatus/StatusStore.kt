@@ -1,6 +1,8 @@
 package com.example.mystatus
 
 import android.content.Context
+import android.os.Build
+import java.util.UUID
 
 object StatusStore {
     private const val PREFS = "status"
@@ -9,6 +11,7 @@ object StatusStore {
     private const val MUSIC = "music"
     private const val MUSIC_KEY = "music_key"
     private const val DEVICE_CREDENTIAL = "device_credential"
+    private const val DEVICE_ID = "device_id"
     private const val LOCATION_PAUSED = "location_paused"
     private const val LAST_UPDATE = "last_update"
     private const val LAST_SUCCESSFUL_UPLOAD = "last_successful_upload"
@@ -39,6 +42,26 @@ object StatusStore {
 
     fun setDeviceCredential(context: Context, value: String) =
         prefs(context).edit().putString(DEVICE_CREDENTIAL, value.trim()).apply()
+
+    /** Stable per-install identifier; contains no hardware identifier or account data. */
+    @Synchronized
+    fun deviceId(context: Context): String {
+        val store = prefs(context)
+        val existing = store.getString(DEVICE_ID, null)
+        if (!existing.isNullOrBlank()) return existing
+        val generated = UUID.randomUUID().toString()
+        store.edit().putString(DEVICE_ID, generated).commit()
+        return generated
+    }
+
+    fun deviceName(): String =
+        listOf(Build.MANUFACTURER, Build.MODEL)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(" ")
+            .take(80)
+            .ifBlank { "Android device" }
 
     fun activity(context: Context): String =
         prefs(context).getString(ACTIVITY, "UNKNOWN") ?: "UNKNOWN"
