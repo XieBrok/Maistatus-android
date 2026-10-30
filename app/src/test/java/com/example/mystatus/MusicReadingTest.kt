@@ -60,6 +60,21 @@ class MusicReadingTest {
     }
 
     @Test
+    fun ongoingNonMediaNotificationRequiresHeuristicFallback() {
+        val custom = Notification().apply {
+            flags = Notification.FLAG_ONGOING_EVENT
+            extras.putCharSequence(Notification.EXTRA_TITLE, "Song")
+            extras.putCharSequence(Notification.EXTRA_TEXT, "Artist")
+        }
+
+        assertNull(parseNotificationMusicFields(custom))
+        assertEquals(
+            NotificationMusicFields("Song", "Artist", null, MusicPlaybackState.PLAYING),
+            parseNotificationMusicFields(custom, heuristicFallback = true)
+        )
+    }
+
+    @Test
     fun bigTextIsUsedAsArtistFallbackAndPauseIsRecognized() {
         val extras = Bundle().apply {
             putCharSequence(Notification.EXTRA_TITLE_BIG, "Song")
@@ -79,6 +94,9 @@ class MusicReadingTest {
         val deduper = MusicEventDeduper()
         assertFalse(deduper.isDuplicate("same"))
         assertTrue(deduper.isDuplicate("same"))
+        // After a "no music" event the same song must be published again.
+        deduper.reset()
+        assertFalse(deduper.isDuplicate("same"))
         val paused = MusicCandidate(
             "notification:paused", "com.example.player", MusicPlaybackState.PAUSED,
             MusicMetadata("Old song", "Artist")

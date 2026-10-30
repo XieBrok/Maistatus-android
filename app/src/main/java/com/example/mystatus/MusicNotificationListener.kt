@@ -9,14 +9,17 @@ import android.util.Log
 import org.json.JSONObject
 
 class MusicNotificationListener : NotificationListenerService() {
-    private val MUSIC_PACKAGE_ALLOWLIST = setOf(
+    /**
+     * Not an allowlist: every app's media-style notification is accepted. These players are
+     * only granted the looser heuristic for custom notifications without standard media markers.
+     */
+    private val HEURISTIC_PLAYER_PACKAGES = setOf(
         "com.netease.cloudmusic",
         "com.tencent.qqmusic"
     )
     private val handler = Handler(Looper.getMainLooper())
     private val notifications = mutableMapOf<String, MusicCandidate>()
     private val eventDeduper = MusicEventDeduper()
-    private var lastPublishedSignature: String? = null
 
     override fun onListenerConnected() {
         super.onListenerConnected()
@@ -38,7 +41,6 @@ class MusicNotificationListener : NotificationListenerService() {
     override fun onListenerDisconnected() {
         handler.post {
             notifications.clear()
-            lastPublishedSignature = null
             instance = null
             StatusStore.setMusicDiagnostic(this, "通知监听服务已断开，请重新授权")
             clearMusicIfNeeded()
@@ -47,48 +49,43 @@ class MusicNotificationListener : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        if (!isAllowedMusicPackage(sbn.packageName)) return
-        handler.post { processNotification(sbn) }
+        // Ignore our own foreground-service notification.
+        if (sbn.packageName == packageName) return
+        handler.post { if (updateNotification(sbn)) recompute() }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
-        if (!isAllowedMusicPackage(sbn.packageName)) return
         handler.post {
             if (notifications.remove(sbn.key) != null) recompute()
         }
     }
 
-    private fun processNotification(sbn: StatusBarNotification) {
-        updateNotification(sbn)
-        recompute()
-    }
-
-    private fun updateNotification(sbn: StatusBarNotification) {
-        if (!isAllowedMusicPackage(sbn.packageName)) {
-            notifications.remove(sbn.key)
-            return
+    /** Returns true when the tracked music candidates changed. */
+    private fun updateNotification(sbn: StatusBarNotification): Boolean {
+        if (sbn.packageName == packageName) return false
+        val fields = runCatching {
+            parseNotificationMusicFields(
+                sbn.notification,
+                heuristicFallback = sbn.packageName in HEURISTIC_PLAYER_PACKAGES
+            )
+        }.getOrNull()
+        if (fields == null) {
+            // Non-music notifications (chat etc.) are never logged or stored.
+            return notifications.remove(sbn.key) != null
         }
-        val fields = runCatching { parseNotificationMusicFields(sbn.notification) }.getOrNull()
         Log.i(
             TAG,
-            "Notification package=${sbn.packageName}, " +
-                "parsedTitle=${fields?.title}, parsedArtist=${fields?.artist}, " +
-                "state=${fields?.state ?: "ignored"}, basis=${fields?.let { stateBasis(sbn.notification, it.state) } ?: "not_music"}"
+            "Music notification package=${sbn.packageName}, " +
+                "state=${fields.state}, basis=${stateBasis(sbn.notification, fields.state)}"
         )
-        if (fields == null) {
-            notifications.remove(sbn.key)
-        } else {
-            notifications[sbn.key] = MusicCandidate(
-                sourceId = "notification:${sbn.key}",
-                packageName = sbn.packageName,
-                state = fields.state,
-                metadata = MusicMetadata(fields.title, fields.artist, fields.album)
-            )
-        }
+        val candidate = MusicCandidate(
+            sourceId = "notification:${sbn.key}",
+            packageName = sbn.packageName,
+            state = fields.state,
+            metadata = MusicMetadata(fields.title, fields.artist, fields.album)
+        )
+        return notifications.put(sbn.key, candidate) != candidate
     }
-
-    private fun isAllowedMusicPackage(packageName: String): Boolean =
-        packageName in MUSIC_PACKAGE_ALLOWLIST
 
     private fun recompute() {
         val selected = selectMusicCandidate(notifications.values)
@@ -109,18 +106,8 @@ class MusicNotificationListener : NotificationListenerService() {
         val stateValue = candidate.state.name.lowercase()
         val signature = "$stateValue|${candidate.packageName}|" +
             "${metadata.title}|${metadata.artist}|${metadata.album}"
-        if (signature == lastPublishedSignature) return
-        lastPublishedSignature = signature
-        val duplicate = eventDeduper.isDuplicate(signature)
-        val previousTitle = StatusStore.musicTitle(this)
-        val previousArtist = StatusStore.musicArtist(this)
-        val previousState = StatusStore.musicState(this)
-        Log.i(
-            TAG,
-            "Music state update before=[$previousTitle, $previousArtist, $previousState], " +
-                "package=${candidate.packageName}, " +
-                "title=${metadata.title}, artist=${metadata.artist}, state=$stateValue"
-        )
+        if (eventDeduper.isDuplicate(signature)) return
+        Log.i(TAG, "Music state update package=${candidate.packageName}, state=$stateValue")
         StatusStore.setMusicReading(
             this,
             candidate.packageName,
@@ -132,29 +119,23 @@ class MusicNotificationListener : NotificationListenerService() {
             else if (metadata.artist.isNullOrBlank()) "已读取歌曲，但艺术家元数据缺失"
             else "已成功读取歌曲"
         )
-        Log.i(
-            TAG,
-            "Music state update after=[${StatusStore.musicTitle(this)}, " +
-                "${StatusStore.musicArtist(this)}, ${StatusStore.musicState(this)}]"
-        )
-        if (!duplicate) {
-            EventQueue.enqueue(this, "music", JSONObject().apply {
-                put("state", stateValue)
-                if (!metadata.title.isNullOrBlank()) put("title", metadata.title)
-                if (!metadata.artist.isNullOrBlank()) put("artist", metadata.artist)
-                if (!metadata.album.isNullOrBlank()) put("album", metadata.album)
-                if (candidate.packageName.isNotBlank()) put("package", candidate.packageName)
-            })
-        }
+        EventQueue.enqueue(this, "music", JSONObject().apply {
+            put("state", stateValue)
+            if (!metadata.title.isNullOrBlank()) put("title", metadata.title)
+            if (!metadata.artist.isNullOrBlank()) put("artist", metadata.artist)
+            if (!metadata.album.isNullOrBlank()) put("album", metadata.album)
+            if (candidate.packageName.isNotBlank()) put("package", candidate.packageName)
+        })
     }
 
     private fun clearMusicIfNeeded() {
-        val hadPersistedMusic = lastPublishedSignature != null ||
-            !StatusStore.musicTitle(this).isNullOrBlank() ||
+        // Forget the last published song so it is reported again if it reappears; otherwise the
+        // server would keep the "unknown" state sent below while the same song plays again.
+        eventDeduper.reset()
+        val hadPersistedMusic = !StatusStore.musicTitle(this).isNullOrBlank() ||
             !StatusStore.music(this).isNullOrBlank()
         if (!hadPersistedMusic) return
         Log.i(TAG, "Music state update cleared: no reliable music notification remains")
-        lastPublishedSignature = null
         StatusStore.setMusicReading(
             this, null, null, null, null, MusicPlaybackState.UNKNOWN.name.lowercase(),
             "当前没有可靠的音乐通知"

@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.os.IBinder
 import android.location.Geocoder
 import android.location.Location
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.ActivityRecognition
@@ -29,6 +30,7 @@ class StatusService : Service() {
     private lateinit var activityClient: ActivityRecognitionClient
     private val locationClient by lazy { LocationServices.getFusedLocationProviderClient(this) }
     private var locationRunning = false
+    private var started = false
     private val geocoderExecutor = Executors.newSingleThreadExecutor()
 
     override fun onCreate() {
@@ -38,7 +40,18 @@ class StatusService : Service() {
             return
         }
         createChannel()
-        startForeground(1, notification())
+        try {
+            startForeground(1, notification())
+        } catch (e: Exception) {
+            // Android 12+ may refuse to (re)start a location foreground service from the
+            // background, e.g. after a sticky restart. Stop cleanly; the dashboard shows the
+            // interruption and lets the user restart collection from the foreground.
+            Log.w(TAG, "Unable to enter foreground; collection interrupted", e)
+            stopSelf()
+            return
+        }
+        started = true
+        isRunning = true
         activityClient = ActivityRecognition.getClient(this)
         requestActivityUpdates()
         UploadScheduler.schedulePeriodic(this)
@@ -46,6 +59,7 @@ class StatusService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!started) return START_NOT_STICKY
         when (intent?.action) {
             ACTION_PAUSE_LOCATION -> pauseLocation()
             ACTION_RESUME_LOCATION -> resumeLocation()
@@ -56,9 +70,11 @@ class StatusService : Service() {
                     activityClient.removeActivityUpdates(activityPendingIntent())
                 }
                 stopSelf()
+                return START_NOT_STICKY
             }
         }
-        return START_NOT_STICKY
+        // Ask the system to recreate the service if it is killed while collection is enabled.
+        return START_STICKY
     }
 
     private fun requestActivityUpdates() {
@@ -66,11 +82,7 @@ class StatusService : Service() {
         if (android.os.Build.VERSION.SDK_INT >= 29 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) !=
             PackageManager.PERMISSION_GRANTED) return
-        val pendingIntent = PendingIntent.getBroadcast(
-            this, 1, Intent(this, ActivityUpdateReceiver::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        )
-        activityClient.requestActivityUpdates(15 * 60_000L, pendingIntent)
+        activityClient.requestActivityUpdates(15 * 60_000L, activityPendingIntent())
     }
 
     private fun startLocationUpdates() {
@@ -98,7 +110,7 @@ class StatusService : Service() {
 
     private fun resumeLocation() {
         StatusStore.setLocationPaused(this, false)
-        startLocationUpdates()
+        if (!locationRunning) startLocationUpdates()
     }
 
     private val locationCallback = object : LocationCallback() {
@@ -139,12 +151,15 @@ class StatusService : Service() {
             .setContentTitle("MaiStatus Android 正在采集")
             .setContentText("位置、活动和音乐将在获得授权后上报")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setOngoing(true)
             .setContentIntent(PendingIntent.getActivity(
                 this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
             .build()
 
     override fun onDestroy() {
+        isRunning = false
         if (locationRunning) locationClient.removeLocationUpdates(locationCallback)
+        locationRunning = false
         geocoderExecutor.shutdownNow()
         if (::activityClient.isInitialized) {
             activityClient.removeActivityUpdates(activityPendingIntent())
@@ -159,8 +174,13 @@ class StatusService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        private const val TAG = "StatusService"
         const val ACTION_PAUSE_LOCATION = "com.example.mystatus.PAUSE_LOCATION"
         const val ACTION_RESUME_LOCATION = "com.example.mystatus.RESUME_LOCATION"
         const val ACTION_STOP = "com.example.mystatus.STOP"
+
+        /** True while this process hosts a foreground-started collection service. */
+        @Volatile var isRunning: Boolean = false
+            private set
     }
 }

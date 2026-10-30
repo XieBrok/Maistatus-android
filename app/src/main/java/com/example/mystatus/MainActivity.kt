@@ -83,6 +83,8 @@ import java.util.Date
 
 private data class DashboardState(
     val collectionEnabled: Boolean,
+    /** Collection is enabled but the service is not alive (killed by the system or refused to start). */
+    val collectionInterrupted: Boolean,
     val location: String,
     val locationUpdated: Long,
     val locationPaused: Boolean,
@@ -207,6 +209,7 @@ private fun rememberDashboardState(context: Context): androidx.compose.runtime.S
     return androidx.compose.runtime.produceState(
         initialValue = DashboardState(
             collectionEnabled = false,
+            collectionInterrupted = false,
             location = "检查中",
             locationUpdated = 0L,
             locationPaused = false,
@@ -245,8 +248,10 @@ private fun readDashboardState(context: Context): DashboardState {
     val postNotification = Build.VERSION.SDK_INT < 33 ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
         PackageManager.PERMISSION_GRANTED
+    val collectionEnabled = StatusStore.collectionEnabled(context)
     return DashboardState(
-        collectionEnabled = StatusStore.collectionEnabled(context),
+        collectionEnabled = collectionEnabled,
+        collectionInterrupted = collectionEnabled && !StatusService.isRunning,
         location = when { fine -> "精确定位" ; coarse -> "大致定位" ; else -> "未授权" },
         locationPaused = StatusStore.isLocationPaused(context),
         locationUpdated = StatusStore.locationAddressTime(context),
@@ -302,10 +307,13 @@ private fun DashboardScreen(
             item { ActivityCard(state) }
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!state.collectionEnabled) {
+                    if (!state.collectionEnabled || state.collectionInterrupted) {
                         Button(onClick = onStart, Modifier.weight(1f)) {
                             Icon(Icons.Default.PlayArrow, null)
-                            Spacer(Modifier.width(8.dp)); Text("开始采集")
+                            Spacer(Modifier.width(8.dp)); Text(if (state.collectionInterrupted) "重新启动" else "开始采集")
+                        }
+                        if (state.collectionInterrupted) TextButton(onClick = onStop) {
+                            Icon(Icons.Default.Stop, null); Spacer(Modifier.width(4.dp)); Text("停止")
                         }
                     } else {
                         Button(onClick = onPauseLocation, Modifier.weight(1f)) {
@@ -401,12 +409,14 @@ private data class ConnectionCopy(
 private fun CollectionCard(state: DashboardState) {
     val status = when {
         !state.collectionEnabled -> "未启动"
+        state.collectionInterrupted -> "已中断"
         state.location == "未授权" && !state.notificationPermission -> "权限不足"
         state.locationPaused -> "已暂停定位"
         else -> "运行中"
     }
     val icon = if (status == "运行中") Icons.Default.CheckCircle else Icons.Default.ErrorOutline
     StatusCard(icon, "采集状态", status, when {
+        state.collectionInterrupted -> "采集服务已被系统停止，请点击“重新启动”"
         state.lastUpdate > 0 -> "最近采集：${formatTime(state.lastUpdate)}"
         else -> "尚未采集到状态事件"
     }) {

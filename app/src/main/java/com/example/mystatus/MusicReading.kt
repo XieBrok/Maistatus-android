@@ -23,10 +23,17 @@ internal data class NotificationMusicFields(
 )
 
 /**
- * Reads only notification content. The package name is retained as source metadata
- * for the existing event format, never as an allowlist or a music classifier.
+ * Reads only notification content. Any app is accepted when its notification carries a standard
+ * media marker (MediaStyle template, media session or transport category).
+ *
+ * [heuristicFallback] additionally accepts ongoing, non-media-style notifications. It is only
+ * enabled for well-known players whose custom notifications lack standard media markers, because
+ * applying it to every app would misclassify navigation, VPN, timers and similar ongoing notices.
  */
-internal fun parseNotificationMusicFields(notification: Notification): NotificationMusicFields? {
+internal fun parseNotificationMusicFields(
+    notification: Notification,
+    heuristicFallback: Boolean = false
+): NotificationMusicFields? {
     val extras = notification.extras ?: Bundle()
     val title = firstText(extras, Notification.EXTRA_TITLE, Notification.EXTRA_TITLE_BIG) ?: return null
     val text = firstText(extras, Notification.EXTRA_TEXT, Notification.EXTRA_BIG_TEXT)
@@ -45,7 +52,10 @@ internal fun parseNotificationMusicFields(notification: Notification): Notificat
     val blockedText = listOf("下载", "download", "正在安装", "installing", "更新中", "update")
         .any { combined.contains(it, ignoreCase = true) }
 
-    if (!mediaLike && (blockedCategory || blockedText || !ongoing || text.isNullOrBlank())) return null
+    if (!mediaLike) {
+        if (!heuristicFallback) return null
+        if (blockedCategory || blockedText || !ongoing || text.isNullOrBlank()) return null
+    }
     if (text.equals(title, ignoreCase = true)) return null
 
     val state = when {
@@ -92,6 +102,10 @@ internal fun musicStatusLabel(
     else -> "播放状态未知"
 }
 
+/**
+ * Suppresses re-publishing an unchanged music state. [reset] must be called whenever a
+ * "no music" event is published so the same song is reported again when it reappears.
+ */
 internal class MusicEventDeduper {
     private var last: String? = null
 
@@ -100,4 +114,8 @@ internal class MusicEventDeduper {
             last = signature
             false
         }
+
+    fun reset() {
+        last = null
+    }
 }
