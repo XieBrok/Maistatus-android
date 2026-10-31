@@ -1,6 +1,7 @@
 package com.example.mystatus
 
 import android.app.Notification
+import android.media.session.PlaybackState
 import android.os.Bundle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -41,6 +42,70 @@ class MusicReadingTest {
 
         assertEquals("Song", parseNotificationMusicFields(notification)?.title)
         assertTrue(parseNotificationMusicFields(notification)?.artist == null)
+    }
+
+    @Test
+    fun nonOngoingMediaNotificationDefaultsToPausedInsteadOfUnknown() {
+        val pausedMedia = Notification().apply {
+            category = Notification.CATEGORY_TRANSPORT
+            extras.putCharSequence(Notification.EXTRA_TITLE, "Song")
+            extras.putCharSequence(Notification.EXTRA_TEXT, "Artist")
+        }
+
+        assertEquals(
+            MusicPlaybackState.PAUSED,
+            parseNotificationMusicFields(pausedMedia)?.state
+        )
+    }
+
+    @Test
+    fun sessionPlaybackStateOverridesOngoingFlagAndInfersAccurateState() {
+        val ongoingButPaused = Notification().apply {
+            category = Notification.CATEGORY_TRANSPORT
+            flags = Notification.FLAG_ONGOING_EVENT
+            extras.putCharSequence(Notification.EXTRA_TITLE, "Song")
+            extras.putCharSequence(Notification.EXTRA_TEXT, "Artist")
+        }
+        val nonOngoingButPlaying = Notification().apply {
+            category = Notification.CATEGORY_TRANSPORT
+            extras.putCharSequence(Notification.EXTRA_TITLE, "Song")
+            extras.putCharSequence(Notification.EXTRA_TEXT, "Artist")
+        }
+
+        assertEquals(
+            MusicPlaybackState.PAUSED,
+            parseNotificationMusicFields(
+                ongoingButPaused,
+                sessionPlaybackState = PlaybackState.STATE_PAUSED
+            )?.state
+        )
+        assertEquals(
+            MusicPlaybackState.PLAYING,
+            parseNotificationMusicFields(
+                nonOngoingButPlaying,
+                sessionPlaybackState = PlaybackState.STATE_PLAYING
+            )?.state
+        )
+        assertEquals(
+            MusicPlaybackState.STOPPED,
+            parseNotificationMusicFields(
+                ongoingButPaused,
+                sessionPlaybackState = PlaybackState.STATE_STOPPED
+            )?.state
+        )
+    }
+
+    @Test
+    fun actionButtonTitlesInferPlayingOrPaused() {
+        assertEquals(
+            MusicPlaybackState.PLAYING,
+            playbackStateFromActionTitles(listOf("上一首", "暂停", "下一首"))
+        )
+        assertEquals(
+            MusicPlaybackState.PAUSED,
+            playbackStateFromActionTitles(listOf("Previous", "Play", "Next"))
+        )
+        assertNull(playbackStateFromActionTitles(listOf("收藏", "歌词")))
     }
 
     @Test

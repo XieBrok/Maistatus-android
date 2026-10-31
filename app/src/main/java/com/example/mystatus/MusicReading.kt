@@ -1,11 +1,63 @@
 package com.example.mystatus
 
 import android.app.Notification
+import android.media.session.PlaybackState
 import android.os.Bundle
 
 enum class MusicPlaybackState { PLAYING, PAUSED, STOPPED, UNKNOWN }
 
 internal const val MUSIC_LOG_TAG = "MusicStatus"
+
+/**
+ * Maps an Android [PlaybackState] code (from a notification's `EXTRA_MEDIA_SESSION` or active
+ * `MediaController`) to [MusicPlaybackState]. Returns `null` when [value] carries no state.
+ */
+internal fun playbackStateFromSessionState(value: Int?): MusicPlaybackState? = when (value) {
+    PlaybackState.STATE_PLAYING,
+    PlaybackState.STATE_FAST_FORWARDING,
+    PlaybackState.STATE_REWINDING -> MusicPlaybackState.PLAYING
+    PlaybackState.STATE_PAUSED,
+    PlaybackState.STATE_BUFFERING,
+    PlaybackState.STATE_CONNECTING,
+    PlaybackState.STATE_SKIPPING_TO_PREVIOUS,
+    PlaybackState.STATE_SKIPPING_TO_NEXT,
+    PlaybackState.STATE_SKIPPING_TO_QUEUE_ITEM -> MusicPlaybackState.PAUSED
+    PlaybackState.STATE_STOPPED,
+    PlaybackState.STATE_NONE,
+    PlaybackState.STATE_ERROR -> MusicPlaybackState.STOPPED
+    else -> null
+}
+
+/**
+ * Infers playback state from the standard media-notification action buttons.
+ *
+ * When a player is playing, its primary transport button offers "Pause"; when paused, the button
+ * changes to "Play". Many players keep `FLAG_ONGOING_EVENT` set while paused or omit it while
+ * playing, so inspecting `notification.actions` is much more reliable than `FLAG_ONGOING_EVENT`
+ * when no `MediaSession` state is available.
+ */
+internal fun playbackStateFromActions(actions: Array<out Notification.Action>?): MusicPlaybackState? =
+    playbackStateFromActionTitles(actions?.mapNotNull { it.title?.toString() }.orEmpty())
+
+internal fun playbackStateFromActionTitles(rawTitles: Iterable<String>): MusicPlaybackState? {
+    val titles = rawTitles.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+    if (titles.isEmpty()) return null
+    val hasPauseAction = titles.any { title ->
+        PAUSE_ACTION_KEYWORDS.any { title.contains(it) }
+    }
+    val hasPlayAction = titles.any { title ->
+        PLAY_ACTION_KEYWORDS.any { title.contains(it) } &&
+            PAUSE_ACTION_KEYWORDS.none { title.contains(it) }
+    }
+    return when {
+        hasPauseAction && !hasPlayAction -> MusicPlaybackState.PLAYING
+        hasPlayAction && !hasPauseAction -> MusicPlaybackState.PAUSED
+        else -> null
+    }
+}
+
+private val PAUSE_ACTION_KEYWORDS = listOf("暂停", "pause")
+private val PLAY_ACTION_KEYWORDS = listOf("播放", "继续播放", "play", "resume")
 
 data class MusicMetadata(
     val title: String?,
@@ -23,16 +75,18 @@ internal data class NotificationMusicFields(
 )
 
 /**
- * Reads only notification content. Any app is accepted when its notification carries a standard
- * media marker (MediaStyle template, media session or transport category).
+ * Reads notification content and optional [sessionPlaybackState] (from the notification's
+ * `EXTRA_MEDIA_SESSION` token or matching `MediaSession`). Any app is accepted when its
+ * notification carries a standard media marker (MediaStyle template, media session or transport
+ * category).
  *
- * [heuristicFallback] additionally accepts ongoing, non-media-style notifications. It is only
- * enabled for well-known players whose custom notifications lack standard media markers, because
- * applying it to every app would misclassify navigation, VPN, timers and similar ongoing notices.
+ * [heuristicFallback] additionally accepts non-media-style notifications from well-known players
+ * whose custom notifications lack standard media markers.
  */
 internal fun parseNotificationMusicFields(
     notification: Notification,
-    heuristicFallback: Boolean = false
+    heuristicFallback: Boolean = false,
+    sessionPlaybackState: Int? = null
 ): NotificationMusicFields? {
     val extras = notification.extras ?: Bundle()
     val title = firstText(extras, Notification.EXTRA_TITLE, Notification.EXTRA_TITLE_BIG) ?: return null
@@ -52,20 +106,38 @@ internal fun parseNotificationMusicFields(
     val blockedText = listOf("下载", "download", "正在安装", "installing", "更新中", "update")
         .any { combined.contains(it, ignoreCase = true) }
 
+    val sessionState = playbackStateFromSessionState(sessionPlaybackState)
+    val actionState = playbackStateFromActions(notification.actions)
+    val hasPauseText = listOfNotNull(text, subText, title).any {
+        it.contains("暂停", ignoreCase = true) ||
+            it.contains("paused", ignoreCase = true)
+    }
+
     if (!mediaLike) {
         if (!heuristicFallback) return null
-        if (blockedCategory || blockedText || !ongoing || text.isNullOrBlank()) return null
+        val hasPlaybackSignal = ongoing ||
+            sessionState != null ||
+            actionState != null ||
+            hasPauseText
+        if (blockedCategory || blockedText || !hasPlaybackSignal || text.isNullOrBlank()) return null
     }
     if (text.equals(title, ignoreCase = true)) return null
 
-    val state = when {
-        listOfNotNull(text, subText, title).any {
-            it.contains("暂停", ignoreCase = true) ||
-                it.contains("paused", ignoreCase = true)
-        } -> MusicPlaybackState.PAUSED
-        ongoing -> MusicPlaybackState.PLAYING
-        else -> MusicPlaybackState.UNKNOWN
-    }
+    // Priority:
+    // 1. Authoritative MediaSession PlaybackState (handles players that keep FLAG_ONGOING_EVENT
+    //    while paused or omit it while playing).
+    // 2. Notification action button labels ("Pause" button shown => playing; "Play" => paused).
+    // 3. Explicit pause markers in notification text fields.
+    // 4. Ongoing flag for active playback, or PAUSED for a dismissible media notification that
+    //    remains in the shade after the user pauses playback.
+    val state = sessionState
+        ?: actionState
+        ?: when {
+            hasPauseText -> MusicPlaybackState.PAUSED
+            ongoing -> MusicPlaybackState.PLAYING
+            mediaLike -> MusicPlaybackState.PAUSED
+            else -> MusicPlaybackState.UNKNOWN
+        }
     return NotificationMusicFields(title, text, album ?: subText, state)
 }
 
